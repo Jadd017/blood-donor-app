@@ -12,6 +12,7 @@ import com.google.firebase.auth.FirebaseAuthInvalidUserException
 import com.google.firebase.auth.FirebaseAuthUserCollisionException
 import com.google.firebase.auth.FirebaseAuthWeakPasswordException
 import com.google.firebase.auth.FirebaseUser
+import com.google.firebase.auth.GoogleAuthProvider
 import com.jadbarakat.blooddonor.R
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -64,6 +65,31 @@ class AuthViewModel(
         runAuthAction {
             val user = auth.signInWithEmailAndPassword(trimmedEmail, password).await().user
             _uiState.update { it.copy(authState = stateFor(user)) }
+        }
+    }
+
+    fun onGoogleSignInResult(result: GoogleSignInResult) {
+        when (result) {
+            is GoogleSignInResult.Success -> signInWithGoogle(result.idToken)
+            GoogleSignInResult.Cancelled -> clearMessages()
+            GoogleSignInResult.NoAccount -> showError(R.string.error_google_no_account)
+            is GoogleSignInResult.Failure -> _uiState.update {
+                it.copy(
+                    error = result.message?.let { msg -> UiMessage(R.string.error_unknown, listOf(msg)) }
+                        ?: UiMessage(R.string.error_unknown_generic),
+                    info = null,
+                )
+            }
+        }
+    }
+
+    private fun signInWithGoogle(idToken: String) {
+        runAuthAction {
+            val credential = GoogleAuthProvider.getCredential(idToken, null)
+            val user = auth.signInWithCredential(credential).await().user
+                ?: error("User is null after Google sign-in")
+            // Google accounts are verified by Google, so skip the verify screen.
+            _uiState.update { it.copy(authState = AuthState.SignedIn(user.email.orEmpty())) }
         }
     }
 
@@ -142,12 +168,19 @@ class AuthViewModel(
 
     private fun stateFor(user: FirebaseUser?): AuthState = when {
         user == null -> AuthState.SignedOut
-        user.isEmailVerified -> AuthState.SignedIn(user.email.orEmpty())
+        user.isEmailVerified || user.hasGoogleProvider() -> AuthState.SignedIn(user.email.orEmpty())
         else -> AuthState.NeedsVerification(user.email.orEmpty())
     }
 
+    private fun FirebaseUser.hasGoogleProvider(): Boolean =
+        providerData.any { it.providerId == GoogleAuthProvider.PROVIDER_ID }
+
     private fun Exception.toUiMessage(): UiMessage = when (this) {
-        is FirebaseAuthUserCollisionException -> UiMessage(R.string.error_email_in_use)
+        is FirebaseAuthUserCollisionException -> when (errorCode) {
+            "ERROR_ACCOUNT_EXISTS_WITH_DIFFERENT_CREDENTIAL", "ERROR_CREDENTIAL_ALREADY_IN_USE" ->
+                UiMessage(R.string.error_google_account_collision)
+            else -> UiMessage(R.string.error_email_in_use)
+        }
         is FirebaseAuthWeakPasswordException -> UiMessage(R.string.error_weak_password)
         is FirebaseAuthInvalidUserException -> when (errorCode) {
             "ERROR_USER_TOKEN_EXPIRED", "ERROR_INVALID_USER_TOKEN" -> UiMessage(R.string.error_session_expired)

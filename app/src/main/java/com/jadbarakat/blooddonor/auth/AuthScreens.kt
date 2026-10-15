@@ -1,7 +1,9 @@
 package com.jadbarakat.blooddonor.auth
 
+import androidx.activity.compose.LocalActivity
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.imePadding
@@ -12,6 +14,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -20,10 +23,12 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
@@ -34,11 +39,28 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.jadbarakat.blooddonor.R
 import com.jadbarakat.blooddonor.ui.theme.BloodDonorTheme
+import kotlinx.coroutines.launch
 
 /** Picks the screen from the current auth state. */
 @Composable
 fun AuthRoot(viewModel: AuthViewModel, modifier: Modifier = Modifier) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val activity = LocalActivity.current
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+
+    // The account picker needs an Activity, so it runs here and only the result goes to the ViewModel.
+    val onGoogleSignIn: () -> Unit = {
+        if (activity != null) {
+            scope.launch { viewModel.onGoogleSignInResult(requestGoogleIdToken(activity)) }
+        }
+    }
+    val onSignOut: () -> Unit = {
+        scope.launch {
+            clearGoogleCredentialState(context)
+            viewModel.signOut()
+        }
+    }
 
     when (val state = uiState.authState) {
         AuthState.SignedOut -> AuthScreen(
@@ -47,6 +69,7 @@ fun AuthRoot(viewModel: AuthViewModel, modifier: Modifier = Modifier) {
             onLogIn = viewModel::logIn,
             onForgotPassword = viewModel::sendPasswordReset,
             onModeChanged = viewModel::clearMessages,
+            onGoogleSignIn = onGoogleSignIn,
             modifier = modifier,
         )
         is AuthState.NeedsVerification -> VerifyEmailScreen(
@@ -54,12 +77,12 @@ fun AuthRoot(viewModel: AuthViewModel, modifier: Modifier = Modifier) {
             uiState = uiState,
             onCheckVerified = viewModel::checkVerified,
             onResend = viewModel::resendVerification,
-            onUseDifferentAccount = viewModel::signOut,
+            onUseDifferentAccount = onSignOut,
             modifier = modifier,
         )
         is AuthState.SignedIn -> SignedInScreen(
             email = state.email,
-            onSignOut = viewModel::signOut,
+            onSignOut = onSignOut,
             modifier = modifier,
         )
     }
@@ -72,6 +95,7 @@ fun AuthScreen(
     onLogIn: (String, String) -> Unit,
     onForgotPassword: (String) -> Unit,
     onModeChanged: () -> Unit,
+    onGoogleSignIn: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var isSignUp by rememberSaveable { mutableStateOf(true) }
@@ -134,6 +158,12 @@ fun AuthScreen(
             enabled = enabled,
         ) {
             Text(stringResource(if (isSignUp) R.string.auth_toggle_to_log_in else R.string.auth_toggle_to_sign_up))
+        }
+
+        OrDivider()
+
+        OutlinedButton(onClick = onGoogleSignIn, enabled = enabled, modifier = Modifier.fillMaxWidth()) {
+            Text(stringResource(R.string.auth_continue_with_google))
         }
     }
 }
@@ -218,6 +248,23 @@ private fun Messages(uiState: AuthUiState) {
 }
 
 @Composable
+private fun OrDivider() {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        HorizontalDivider(modifier = Modifier.weight(1f))
+        Text(
+            text = stringResource(R.string.auth_or),
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        HorizontalDivider(modifier = Modifier.weight(1f))
+    }
+}
+
+@Composable
 private fun ButtonContent(text: String, isLoading: Boolean) {
     if (isLoading) {
         CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
@@ -233,7 +280,7 @@ private fun UiMessage.resolve(): String = stringResource(resId, *args.toTypedArr
 @Composable
 private fun AuthScreenPreview() {
     BloodDonorTheme {
-        AuthScreen(AuthUiState(), { _, _ -> }, { _, _ -> }, {}, {})
+        AuthScreen(AuthUiState(), { _, _ -> }, { _, _ -> }, {}, {}, {})
     }
 }
 
