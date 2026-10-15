@@ -1,3 +1,45 @@
 <resources>
     <string name="app_name">BloodDonor</string>
+
+    <!-- Sign up / Log in -->
+    <string name="auth_title_sign_up">Create your account</string>
+    <string name="auth_title_log_in">Welcome back</string>
+    <string name="auth_email_label">Email</string>
+    <string name="auth_password_label">Password</string>
+    <string name="auth_password_hint">At least 8 characters</string>
+    <string name="auth_button_sign_up">Sign up</string>
+    <string name="auth_button_log_in">Log in</string>
+    <string name="auth_toggle_to_log_in">Already have an account? Log in</string>
+    <string name="auth_toggle_to_sign_up">New here? Create an account</string>
+    <string name="auth_forgot_password">Forgot password?</string>
+    <string name="auth_password_reset_sent">If an account exists for that email, a password reset link has been sent.</string>
+
+    <!-- Verify email -->
+    <string name="verify_title">Verify your email</string>
+    <string name="verify_body">We sent a verification link to %1$s. Open it, then come back and tap the button below. Check your spam folder if you don\'t see it.</string>
+    <string name="verify_button_done">I\'ve verified my email</string>
+    <string name="verify_button_resend">Resend email</string>
+    <string name="verify_button_different_account">Use a different account</string>
+    <string name="verify_resent">Verification email sent to %1$s.</string>
+    <string name="verify_still_unverified">Your email isn\'t verified yet. Open the link in the email, then try again.</string>
+
+    <!-- Signed in -->
+    <string name="signed_in_title">You\'re signed in</string>
+    <string name="signed_in_body">Signed in as %1$s</string>
+    <string name="signed_in_button_sign_out">Sign out</string>
+
+    <!-- Validation errors -->
+    <string name="error_invalid_email">Enter a valid email address.</string>
+    <string name="error_password_too_short">Password must be at least 8 characters.</string>
+
+    <!-- Firebase errors -->
+    <string name="error_email_in_use">An account with this email already exists. Try logging in instead.</string>
+    <string name="error_invalid_credentials">Incorrect email or password.</string>
+    <string name="error_user_not_found">No account found for this email, or it has been disabled.</string>
+    <string name="error_weak_password">That password is too weak. Choose a stronger one.</string>
+    <string name="error_network">No internet connection. Check your network and try again.</string>
+    <string name="error_too_many_requests">Too many attempts. Please wait a moment and try again.</string>
+    <string name="error_session_expired">Your session has expired. Please log in again.</string>
+    <string name="error_unknown">Something went wrong: %1$s</string>
+    <string name="error_unknown_generic">Something went wrong. Please try again.</string>
 </resources>
