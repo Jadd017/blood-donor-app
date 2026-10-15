@@ -1,13 +1,14 @@
 plugins {
     application
     alias(libs.plugins.jetbrains.kotlin.jvm)
+    alias(libs.plugins.kotlin.serialization)
 }
 
 application {
     mainClass.set("com.jadbarakat.blooddonor.server.MainKt")
 }
 
-// Load local DB settings from server/.env (git-ignored) when running with
+// Load local settings (DB, Firebase) from server/.env (git-ignored) when running with
 // `./gradlew :server:run`. If the file is missing, real environment variables are used.
 tasks.named<JavaExec>("run") {
     val envFile = file(".env")
@@ -21,23 +22,49 @@ tasks.named<JavaExec>("run") {
             }
     }
 }
+// Flyway needs Java 17+; the server runs on Java 21 (the :app module is unaffected).
 java {
-    sourceCompatibility = JavaVersion.VERSION_11
-    targetCompatibility = JavaVersion.VERSION_11
+    sourceCompatibility = JavaVersion.VERSION_21
+    targetCompatibility = JavaVersion.VERSION_21
 }
 kotlin {
     compilerOptions {
-        jvmTarget = org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_11
+        jvmTarget = org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_21
     }
 }
 
 dependencies {
     // Ktor web server
-    implementation("io.ktor:ktor-server-core:3.5.1")
-    implementation("io.ktor:ktor-server-netty:3.5.1")
+    implementation(libs.ktor.server.core)
+    implementation(libs.ktor.server.netty)
+    implementation(libs.ktor.server.content.negotiation)
+    implementation(libs.ktor.serialization.kotlinx.json)
+    implementation(libs.ktor.server.auth)
+    implementation(libs.ktor.server.status.pages)
+    implementation(libs.ktor.server.call.logging)
     // Logging
-    implementation("ch.qos.logback:logback-classic:1.5.18")
+    implementation(libs.logback.classic)
     // PostgreSQL driver + connection pool
-    implementation("org.postgresql:postgresql:42.7.7")
-    implementation("com.zaxxer:HikariCP:6.3.0")
+    implementation(libs.postgresql)
+    implementation(libs.hikaricp)
+    // Database migrations
+    implementation(libs.flyway.core)
+    implementation(libs.flyway.database.postgresql)
+    // SQL queries
+    implementation(libs.exposed.core)
+    implementation(libs.exposed.jdbc)
+    implementation(libs.exposed.java.time)
+    // Firebase ID-token verification. We only use Auth, so drop the heavy
+    // Firestore and Cloud Storage clients to keep memory use low.
+    implementation(libs.firebase.admin) {
+        exclude(group = "com.google.cloud", module = "google-cloud-firestore")
+        exclude(group = "com.google.cloud", module = "google-cloud-storage")
+    }
+    // Firebase Admin needs JacksonFactory, which used to arrive via the excluded modules.
+    implementation(libs.google.http.client.jackson2)
+    // Phone number validation
+    implementation(libs.libphonenumber)
+
+    testImplementation(libs.ktor.server.test.host)
+    testImplementation(libs.kotlin.test.junit)
 }
