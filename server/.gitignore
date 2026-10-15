@@ -1,1 +1,3 @@
 /build
+# Local database credentials, never commit
+.env

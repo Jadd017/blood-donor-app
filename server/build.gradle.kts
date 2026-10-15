@@ -1,6 +1,25 @@
 plugins {
-    id("java-library")
+    application
     alias(libs.plugins.jetbrains.kotlin.jvm)
+}
+
+application {
+    mainClass.set("com.jadbarakat.blooddonor.server.MainKt")
+}
+
+// Load local DB settings from server/.env (git-ignored) when running with
+// `./gradlew :server:run`. If the file is missing, real environment variables are used.
+tasks.named<JavaExec>("run") {
+    val envFile = file(".env")
+    if (envFile.exists()) {
+        envFile.readLines()
+            .map { it.trim() }
+            .filter { it.isNotEmpty() && !it.startsWith("#") && "=" in it }
+            .forEach { line ->
+                val (key, value) = line.split("=", limit = 2)
+                environment(key.trim(), value.trim())
+            }
+    }
 }
 java {
     sourceCompatibility = JavaVersion.VERSION_11
