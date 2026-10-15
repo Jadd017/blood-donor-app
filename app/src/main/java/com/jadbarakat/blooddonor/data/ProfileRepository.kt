@@ -11,7 +11,7 @@ class ProfileRepository(private val api: ApiClient) {
 
     /** The signed-in user's profile, or null if they haven't created one yet. */
     suspend fun getMe(): Profile? = try {
-        api.send(authenticated = true, build = { url(ME) }) { it.body<Profile>() }
+        api.send(authenticated = true, configure = { url(ME) }) { it.body<Profile>() }
     } catch (e: ApiException.Http) {
         if (e.status == 404 && e.code == ErrorCodes.PROFILE_NOT_FOUND) null else throw e
     }
@@ -19,7 +19,7 @@ class ProfileRepository(private val api: ApiClient) {
     suspend fun saveMe(request: ProfileRequest): Profile =
         api.send(
             authenticated = true,
-            build = {
+            configure = {
                 method = HttpMethod.Put
                 url(ME)
                 contentType(ContentType.Application.Json)
@@ -28,7 +28,7 @@ class ProfileRepository(private val api: ApiClient) {
         ) { it.body<Profile>() }
 
     suspend fun getAreas(): List<Area> =
-        api.send(authenticated = false, build = { url(AREAS) }) { it.body<List<Area>>() }
+        api.send(authenticated = false, configure = { url(AREAS) }) { it.body<List<Area>>() }
 
     private companion object {
         const val ME = "api/v1/me"

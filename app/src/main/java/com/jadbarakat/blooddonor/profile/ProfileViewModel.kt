@@ -1,5 +1,6 @@
 package com.jadbarakat.blooddonor.profile
 
+import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.google.firebase.auth.FirebaseAuth
@@ -109,6 +110,7 @@ class ProfileViewModel(
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
+                Log.w(TAG, "Loading profile failed", e)
                 _uiState.update { it.copy(screen = ProfileScreen.LoadFailed(e.toUiMessage())) }
             }
         }
@@ -184,6 +186,7 @@ class ProfileViewModel(
                     }
                 }
             } catch (e: Exception) {
+                Log.w(TAG, "Saving profile failed", e)
                 _uiState.update { it.copy(saveError = e.toUiMessage()) }
             } finally {
                 _uiState.update { it.copy(isSaving = false) }
@@ -235,5 +238,9 @@ class ProfileViewModel(
             else -> UiMessage(R.string.api_error_request, listOf(code))
         }
         else -> UiMessage(R.string.error_unknown_generic)
+    }
+
+    private companion object {
+        const val TAG = "ProfileViewModel"
     }
 }

@@ -64,22 +64,24 @@ class ApiClient(
     }
 
     /**
-     * Sends a request, checks for a 2xx and decodes it with [read]; throws [ApiException] otherwise.
+     * Sends a request set up by [configure], checks for a 2xx and decodes it with [read]; throws [ApiException] otherwise.
      * Paths are relative to the base URL, e.g. "api/v1/me".
      */
     suspend fun <T> send(
         authenticated: Boolean,
-        build: HttpRequestBuilder.() -> Unit,
+        configure: HttpRequestBuilder.() -> Unit,
         read: suspend (HttpResponse) -> T,
     ): T = translateErrors {
-        val response = if (authenticated) sendWithToken(build) else http.request(build).orThrow()
+        val response = if (authenticated) sendWithToken(configure) else http.request(configure).orThrow()
         read(response)
     }
 
-    private suspend fun sendWithToken(build: HttpRequestBuilder.() -> Unit): HttpResponse {
+    // Not named `build`: inside http.request { } that would resolve to HttpRequestBuilder.build(),
+    // silently dropping the URL and sending the request to http://localhost:80.
+    private suspend fun sendWithToken(configure: HttpRequestBuilder.() -> Unit): HttpResponse {
         val user = auth.currentUser ?: throw ApiException.NotSignedIn()
         val first = http.request {
-            build()
+            configure()
             bearerAuth(user.getIdToken(false).await().token.orEmpty())
         }
         if (first.status.isSuccess()) return first
@@ -87,7 +89,7 @@ class ApiClient(
         val error = first.toError()
         if (!error.isTokenProblem()) throw error
         return http.request {
-            build()
+            configure()
             bearerAuth(user.getIdToken(true).await().token.orEmpty())
         }.orThrow()
     }
