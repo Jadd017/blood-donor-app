@@ -26,9 +26,57 @@
     <string name="verify_still_unverified">Your email isn\'t verified yet. Open the link in the email, then try again.</string>
 
     <!-- Signed in -->
-    <string name="signed_in_title">You\'re signed in</string>
-    <string name="signed_in_body">Signed in as %1$s</string>
     <string name="signed_in_button_sign_out">Sign out</string>
+
+    <!-- Common -->
+    <string name="button_retry">Retry</string>
+    <string name="button_ok">OK</string>
+    <string name="load_failed_title">Couldn\'t load your profile</string>
+
+    <!-- Profile form -->
+    <string name="profile_title_setup">Set up your profile</string>
+    <string name="profile_title_edit">Edit profile</string>
+    <string name="profile_setup_intro">Tell us a little about yourself so we can match you with people who need blood nearby.</string>
+    <string name="profile_full_name_label">Full name</string>
+    <string name="profile_phone_label">Phone</string>
+    <string name="profile_phone_placeholder">+961</string>
+    <string name="profile_phone_privacy_note">Your phone number is only shared with someone who needs blood after you agree to help.</string>
+    <string name="profile_blood_type_label">Blood type</string>
+    <string name="profile_blood_type_unknown">I don\'t know</string>
+    <string name="profile_sex_label">Sex</string>
+    <string name="profile_sex_male">Male</string>
+    <string name="profile_sex_female">Female</string>
+    <string name="profile_area_label">Area</string>
+    <string name="profile_area_placeholder">Choose your area</string>
+    <string name="profile_area_value">%1$s, %2$s</string>
+    <string name="profile_last_donation_label">Last donation date</string>
+    <string name="profile_last_donation_never">Never / I don\'t remember</string>
+    <string name="profile_is_donor_label">Notify me about blood requests I can help with</string>
+    <string name="profile_button_save">Save</string>
+    <string name="profile_button_cancel">Cancel</string>
+
+    <!-- Profile errors -->
+    <string name="profile_error_name_required">Enter your full name (at least 2 characters).</string>
+    <string name="profile_error_name_invalid">Your name must be 2 to 60 characters.</string>
+    <string name="profile_error_phone_required">Enter your phone number.</string>
+    <string name="profile_error_phone_invalid">Enter a valid Lebanese mobile number, e.g. +961 71 123 456.</string>
+    <string name="profile_error_phone_taken">This phone number is already used by another account.</string>
+    <string name="profile_error_sex_required">Choose an option.</string>
+    <string name="profile_error_area_required">Choose your area.</string>
+
+    <!-- Home -->
+    <string name="home_title">Hi, %1$s</string>
+    <string name="home_not_set">Not set</string>
+    <string name="home_notifications_label">Blood request alerts</string>
+    <string name="home_notifications_on">On</string>
+    <string name="home_notifications_off">Off</string>
+    <string name="home_button_edit_profile">Edit profile</string>
+
+    <!-- Server errors -->
+    <string name="api_error_unreachable">Can\'t reach the server. Check your internet connection and try again.</string>
+    <string name="api_error_server">The server had a problem. Please try again in a moment.</string>
+    <string name="api_error_email_not_verified">Your email address isn\'t verified yet. Verify it, then try again.</string>
+    <string name="api_error_request">The request failed (%1$s). Please try again.</string>
 
     <!-- Validation errors -->
     <string name="error_invalid_email">Enter a valid email address.</string>

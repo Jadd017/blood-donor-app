@@ -38,12 +38,20 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.jadbarakat.blooddonor.R
+import com.jadbarakat.blooddonor.ui.resolve
 import com.jadbarakat.blooddonor.ui.theme.BloodDonorTheme
 import kotlinx.coroutines.launch
 
-/** Picks the screen from the current auth state. */
+/**
+ * Picks the screen from the current auth state. Once the user is signed in (and verified),
+ * [signedInContent] takes over; it gets the sign-out action and the modifier.
+ */
 @Composable
-fun AuthRoot(viewModel: AuthViewModel, modifier: Modifier = Modifier) {
+fun AuthRoot(
+    viewModel: AuthViewModel,
+    modifier: Modifier = Modifier,
+    signedInContent: @Composable (onSignOut: () -> Unit, modifier: Modifier) -> Unit,
+) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val activity = LocalActivity.current
     val context = LocalContext.current
@@ -80,11 +88,7 @@ fun AuthRoot(viewModel: AuthViewModel, modifier: Modifier = Modifier) {
             onUseDifferentAccount = onSignOut,
             modifier = modifier,
         )
-        is AuthState.SignedIn -> SignedInScreen(
-            email = state.email,
-            onSignOut = onSignOut,
-            modifier = modifier,
-        )
+        is AuthState.SignedIn -> signedInContent(onSignOut, modifier)
     }
 }
 
@@ -202,17 +206,6 @@ fun VerifyEmailScreen(
 }
 
 @Composable
-fun SignedInScreen(email: String, onSignOut: () -> Unit, modifier: Modifier = Modifier) {
-    ScreenColumn(modifier) {
-        Text(stringResource(R.string.signed_in_title), style = MaterialTheme.typography.headlineMedium)
-        Text(stringResource(R.string.signed_in_body, email), style = MaterialTheme.typography.bodyLarge)
-        Button(onClick = onSignOut, modifier = Modifier.fillMaxWidth()) {
-            Text(stringResource(R.string.signed_in_button_sign_out))
-        }
-    }
-}
-
-@Composable
 private fun ScreenColumn(modifier: Modifier, content: @Composable () -> Unit) {
     Column(
         modifier = modifier
@@ -272,9 +265,6 @@ private fun ButtonContent(text: String, isLoading: Boolean) {
         Text(text)
     }
 }
-
-@Composable
-private fun UiMessage.resolve(): String = stringResource(resId, *args.toTypedArray())
 
 @Preview(showBackground = true)
 @Composable

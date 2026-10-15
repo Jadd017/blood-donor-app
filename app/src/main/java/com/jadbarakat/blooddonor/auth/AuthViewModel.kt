@@ -14,6 +14,7 @@ import com.google.firebase.auth.FirebaseAuthWeakPasswordException
 import com.google.firebase.auth.FirebaseUser
 import com.google.firebase.auth.GoogleAuthProvider
 import com.jadbarakat.blooddonor.R
+import com.jadbarakat.blooddonor.ui.UiMessage
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -27,9 +28,6 @@ sealed interface AuthState {
     data class NeedsVerification(val email: String) : AuthState
     data class SignedIn(val email: String) : AuthState
 }
-
-/** A user-facing message, resolved to text in the UI so the ViewModel stays Context-free. */
-data class UiMessage(@param:StringRes val resId: Int, val args: List<String> = emptyList())
 
 data class AuthUiState(
     val authState: AuthState = AuthState.SignedOut,
