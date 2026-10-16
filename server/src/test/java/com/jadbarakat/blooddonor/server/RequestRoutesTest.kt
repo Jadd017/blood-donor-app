@@ -137,6 +137,12 @@ class RequestRoutesTest {
         val response = client.get("/api/v1/hospitals?areaId=2") { bearerAuth("alice-token") }
         val list = Json.parseToJsonElement(response.bodyAsText()).jsonArray
         assertEquals(listOf("Hayek Hospital"), list.map { it.jsonObject.str("name") })
+        // Area 1 also has an inactive hospital, which must stay hidden.
+        val beirut = client.get("/api/v1/hospitals?areaId=1") { bearerAuth("alice-token") }.bodyAsText()
+        assertEquals(
+            listOf("American University Hospital", "Rizk Hospital"),
+            Json.parseToJsonElement(beirut).jsonArray.map { it.jsonObject.str("name") },
+        )
         assertError(
             client.get("/api/v1/hospitals?areaId=abc") { bearerAuth("alice-token") },
             HttpStatusCode.BadRequest,
