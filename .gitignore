@@ -17,3 +17,10 @@ local.properties
 
 # Firebase config (download from the Firebase console, see README)
 app/google-services.json
+
+# Signing keys and service account credentials, never commit
+*.jks
+*.keystore
+*.p12
+*-service-account*.json
+*firebase-adminsdk*.json
