@@ -1,6 +1,7 @@
 package com.jadbarakat.blooddonor.server.data
 
 import com.jadbarakat.blooddonor.server.api.ApiException
+import com.jadbarakat.blooddonor.server.matching.DonorCandidate
 import io.ktor.http.HttpStatusCode
 import java.time.Instant
 
@@ -45,6 +46,53 @@ interface BloodRequestRepository {
 
     /** Marks every open request past needed_by at [now] as expired. Returns how many changed. */
     suspend fun expireOverdue(now: Instant): Int
+
+    /** True if [userId] was sent a notification about request [requestId]. */
+    suspend fun isNotified(requestId: Long, userId: Long): Boolean
+
+    /** Requests [userId] was notified about, newest first (any status; callers filter). */
+    suspend fun listNotifiedTo(userId: Long): List<BloodRequest>
+}
+
+interface DeviceTokenRepository {
+    /** Registers [token] for [userId], taking it over if another user had it (shared phone). */
+    suspend fun upsert(userId: Long, token: String, now: Instant)
+
+    /** Removes [token] if it belongs to [userId]. */
+    suspend fun delete(userId: Long, token: String)
+
+    suspend fun tokensFor(userIds: Collection<Long>): Map<Long, List<String>>
+
+    /** Removes tokens FCM reported as no longer valid, whoever they belong to. */
+    suspend fun deleteTokens(tokens: Collection<String>)
+}
+
+/** Queries used by the notification waves. */
+interface MatchingRepository {
+    /** Open requests, not past needed_by at [now], with fewer than [totalWaves] waves sent. */
+    suspend fun requestsAwaitingWaves(now: Instant, totalWaves: Int): List<BloodRequest>
+
+    /**
+     * Atomically moves request [requestId] from [fromWave] to [toWave] waves sent, if it is still
+     * open and not past needed_by. False if someone else claimed it first or it closed.
+     */
+    suspend fun claimWave(requestId: Long, fromWave: Int, toWave: Int, now: Instant): Boolean
+
+    /**
+     * Possible donors for a request: donors with one of [donorTypes] and a device token, who are not
+     * the requester and weren't notified about this request yet, with their area within
+     * [radiusMeters] of the hospital (null = anywhere). [since] is the start of the 24 h window
+     * for [DonorCandidate.notificationsLast24h]. The final eligibility check is done in Kotlin.
+     */
+    suspend fun candidates(
+        request: BloodRequest,
+        donorTypes: Set<String>,
+        radiusMeters: Double?,
+        since: Instant,
+    ): List<DonorCandidate>
+
+    /** Logs that [userIds] were notified about [requestId] in [wave]. Already-logged users are skipped. */
+    suspend fun recordNotifications(requestId: Long, userIds: Collection<Long>, wave: Int, now: Instant)
 }
 
 fun phoneTaken() = ApiException(HttpStatusCode.Conflict, "phone_taken", "This phone number is already registered")

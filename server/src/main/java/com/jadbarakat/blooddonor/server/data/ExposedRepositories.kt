@@ -9,6 +9,7 @@ import org.jetbrains.exposed.v1.core.Table
 import org.jetbrains.exposed.v1.core.and
 import org.jetbrains.exposed.v1.core.eq
 import org.jetbrains.exposed.v1.core.greater
+import org.jetbrains.exposed.v1.core.less
 import org.jetbrains.exposed.v1.core.lessEq
 import org.jetbrains.exposed.v1.core.statements.UpdateBuilder
 import org.jetbrains.exposed.v1.javatime.CurrentTimestampWithTimeZone
@@ -21,6 +22,7 @@ import org.jetbrains.exposed.v1.jdbc.selectAll
 import org.jetbrains.exposed.v1.jdbc.transactions.transaction
 import org.jetbrains.exposed.v1.jdbc.update
 import org.postgresql.util.PSQLException
+import java.sql.Connection
 import java.sql.SQLException
 import java.time.Instant
 import java.time.OffsetDateTime
@@ -68,6 +70,12 @@ private object BloodRequestsTable : Table("blood_requests") {
     val status = text("status")
     val createdAt = timestampWithTimeZone("created_at")
     val closedAt = timestampWithTimeZone("closed_at").nullable()
+    val wavesSent = short("waves_sent")
+}
+
+private object RequestNotificationsTable : Table("request_notifications") {
+    val requestId = long("request_id")
+    val userId = long("user_id")
 }
 
 class ExposedAreaRepository(private val db: Database) : AreaRepository {
@@ -169,9 +177,6 @@ class ExposedHospitalRepository(private val db: Database) : HospitalRepository {
 
 class ExposedBloodRequestRepository(private val db: Database) : BloodRequestRepository {
 
-    private val withHospital
-        get() = BloodRequestsTable.join(HospitalsTable, JoinType.INNER, BloodRequestsTable.hospitalId, HospitalsTable.id)
-
     override suspend fun create(requesterId: Long, input: NewBloodRequest, now: Instant): BloodRequest = query(db) {
         val id = BloodRequestsTable.insert {
             it[BloodRequestsTable.requesterId] = requesterId
@@ -190,7 +195,7 @@ class ExposedBloodRequestRepository(private val db: Database) : BloodRequestRepo
     override suspend fun findById(id: Long): BloodRequest? = query(db) { selectById(id) }
 
     override suspend fun listByRequester(requesterId: Long): List<BloodRequest> = query(db) {
-        withHospital.selectAll()
+        requestsWithHospital.selectAll()
             .where { BloodRequestsTable.requesterId eq requesterId }
             .orderBy(BloodRequestsTable.createdAt to SortOrder.DESC, BloodRequestsTable.id to SortOrder.DESC)
             .map { it.toRequest() }
@@ -219,26 +224,66 @@ class ExposedBloodRequestRepository(private val db: Database) : BloodRequestRepo
     }
 
     private fun selectById(id: Long): BloodRequest? =
-        withHospital.selectAll().where { BloodRequestsTable.id eq id }.singleOrNull()?.toRequest()
+        requestsWithHospital.selectAll().where { BloodRequestsTable.id eq id }.singleOrNull()?.toRequest()
 
-    private fun ResultRow.toRequest() = BloodRequest(
-        id = this[BloodRequestsTable.id],
-        requesterId = this[BloodRequestsTable.requesterId],
-        hospitalId = this[BloodRequestsTable.hospitalId],
-        hospitalName = this[HospitalsTable.name],
-        bloodType = this[BloodRequestsTable.bloodType],
-        component = this[BloodRequestsTable.component],
-        unitsNeeded = this[BloodRequestsTable.unitsNeeded],
-        neededBy = this[BloodRequestsTable.neededBy].toInstant(),
-        note = this[BloodRequestsTable.note],
-        status = this[BloodRequestsTable.status],
-        createdAt = this[BloodRequestsTable.createdAt].toInstant(),
-        closedAt = this[BloodRequestsTable.closedAt]?.toInstant(),
-    )
+    override suspend fun isNotified(requestId: Long, userId: Long): Boolean = query(db) {
+        RequestNotificationsTable.select(RequestNotificationsTable.requestId)
+            .where { (RequestNotificationsTable.requestId eq requestId) and (RequestNotificationsTable.userId eq userId) }
+            .any()
+    }
 
-    private fun Instant.toOffset(): OffsetDateTime = atOffset(ZoneOffset.UTC)
+    override suspend fun listNotifiedTo(userId: Long): List<BloodRequest> = query(db) {
+        requestsWithHospital
+            .join(RequestNotificationsTable, JoinType.INNER, BloodRequestsTable.id, RequestNotificationsTable.requestId)
+            .selectAll()
+            .where { RequestNotificationsTable.userId eq userId }
+            .orderBy(BloodRequestsTable.createdAt to SortOrder.DESC, BloodRequestsTable.id to SortOrder.DESC)
+            .map { it.toRequest() }
+    }
+}
+
+/** blood_requests with their hospital and the hospital's area. */
+private val requestsWithHospital
+    get() = BloodRequestsTable
+        .join(HospitalsTable, JoinType.INNER, BloodRequestsTable.hospitalId, HospitalsTable.id)
+        .join(AreasTable, JoinType.INNER, HospitalsTable.areaId, AreasTable.id)
+
+private fun ResultRow.toRequest() = BloodRequest(
+    id = this[BloodRequestsTable.id],
+    requesterId = this[BloodRequestsTable.requesterId],
+    hospitalId = this[BloodRequestsTable.hospitalId],
+    hospitalName = this[HospitalsTable.name],
+    areaName = this[AreasTable.name],
+    bloodType = this[BloodRequestsTable.bloodType],
+    component = this[BloodRequestsTable.component],
+    unitsNeeded = this[BloodRequestsTable.unitsNeeded],
+    neededBy = this[BloodRequestsTable.neededBy].toInstant(),
+    note = this[BloodRequestsTable.note],
+    status = this[BloodRequestsTable.status],
+    createdAt = this[BloodRequestsTable.createdAt].toInstant(),
+    closedAt = this[BloodRequestsTable.closedAt]?.toInstant(),
+    wavesSent = this[BloodRequestsTable.wavesSent].toInt(),
+)
+
+
+internal fun Instant.toOffset(): OffsetDateTime = atOffset(ZoneOffset.UTC)
+
+/** Open requests, not past needed_by at [now], with fewer than [totalWaves] waves sent; oldest first. */
+internal suspend fun openRequestsAwaitingWaves(db: Database, now: Instant, totalWaves: Int): List<BloodRequest> = query(db) {
+    requestsWithHospital.selectAll()
+        .where {
+            (BloodRequestsTable.status eq RequestStatus.OPEN) and
+                (BloodRequestsTable.neededBy greater now.toOffset()) and
+                (BloodRequestsTable.wavesSent less totalWaves.toShort())
+        }
+        .orderBy(BloodRequestsTable.createdAt)
+        .map { it.toRequest() }
 }
 
 /** Runs a blocking JDBC transaction off the request thread. */
 private suspend fun <T> query(db: Database, block: () -> T): T =
     withContext(Dispatchers.IO) { transaction(db) { block() } }
+
+/** Like [query], with the transaction's plain JDBC connection. */
+internal suspend fun <T> jdbc(db: Database, block: (Connection) -> T): T =
+    withContext(Dispatchers.IO) { transaction(db) { block(connection.connection as Connection) } }

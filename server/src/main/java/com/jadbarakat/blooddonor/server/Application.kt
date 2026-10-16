@@ -3,11 +3,13 @@ package com.jadbarakat.blooddonor.server
 import com.jadbarakat.blooddonor.server.api.ApiError
 import com.jadbarakat.blooddonor.server.api.ApiException
 import com.jadbarakat.blooddonor.server.api.FIREBASE_AUTH
+import com.jadbarakat.blooddonor.server.api.RequestCreatedListener
 import com.jadbarakat.blooddonor.server.api.apiV1
 import com.jadbarakat.blooddonor.server.auth.TokenVerifier
 import com.jadbarakat.blooddonor.server.auth.UserPrincipal
 import com.jadbarakat.blooddonor.server.data.AreaRepository
 import com.jadbarakat.blooddonor.server.data.BloodRequestRepository
+import com.jadbarakat.blooddonor.server.data.DeviceTokenRepository
 import com.jadbarakat.blooddonor.server.data.HospitalRepository
 import com.jadbarakat.blooddonor.server.data.UserRepository
 import io.ktor.http.HttpStatusCode
@@ -36,6 +38,8 @@ fun Application.module(
     areas: AreaRepository,
     hospitals: HospitalRepository,
     requests: BloodRequestRepository,
+    deviceTokens: DeviceTokenRepository,
+    onRequestCreated: RequestCreatedListener = RequestCreatedListener {},
     clock: Clock = Clock.system(ZoneId.of("Asia/Beirut")),
     healthCheck: () -> Boolean = { true },
 ) {
@@ -86,6 +90,6 @@ fun Application.module(
                 else "Server OK, database NOT reachable"
             )
         }
-        apiV1(users, areas, hospitals, requests, clock)
+        apiV1(users, areas, hospitals, requests, deviceTokens, onRequestCreated, clock)
     }
 }

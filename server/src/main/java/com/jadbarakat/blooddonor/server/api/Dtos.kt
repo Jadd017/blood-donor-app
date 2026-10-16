@@ -63,6 +63,24 @@ data class BloodRequestResponse(
     val closedAt: String? = null,
 )
 
+/** Body of PUT and DELETE /me/device-token. */
+@Serializable
+data class DeviceTokenBody(val token: String)
+
+/** What a notified donor sees about a request: nothing about the requester. */
+@Serializable
+data class DonorRequestResponse(
+    val id: Long,
+    val bloodType: String,
+    val component: String,
+    val unitsNeeded: Int,
+    val hospitalName: String,
+    val areaName: String,
+    val neededBy: String,
+    val note: String? = null,
+    val status: String,
+)
+
 fun Area.toResponse() = AreaResponse(id, name, district, governorate)
 
 fun UserProfile.toResponse() = ProfileResponse(
@@ -90,4 +108,16 @@ fun BloodRequest.toResponse() = BloodRequestResponse(
     status = status,
     createdAt = createdAt.toString(),
     closedAt = closedAt?.toString(),
+)
+
+fun BloodRequest.toDonorResponse() = DonorRequestResponse(
+    id = id,
+    bloodType = bloodType,
+    component = component,
+    unitsNeeded = unitsNeeded,
+    hospitalName = hospitalName,
+    areaName = areaName,
+    neededBy = neededBy.toString(),
+    note = note,
+    status = status,
 )

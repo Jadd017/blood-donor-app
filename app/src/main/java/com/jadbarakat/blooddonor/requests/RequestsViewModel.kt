@@ -8,9 +8,11 @@ import com.jadbarakat.blooddonor.R
 import com.jadbarakat.blooddonor.data.ApiException
 import com.jadbarakat.blooddonor.data.BloodRequest
 import com.jadbarakat.blooddonor.data.CreateBloodRequest
+import com.jadbarakat.blooddonor.data.DonorRequest
 import com.jadbarakat.blooddonor.data.ErrorCodes
 import com.jadbarakat.blooddonor.data.Hospital
 import com.jadbarakat.blooddonor.data.RequestRepository
+import com.jadbarakat.blooddonor.notifications.DeviceTokenManager
 import com.jadbarakat.blooddonor.ui.UiMessage
 import com.jadbarakat.blooddonor.ui.toUiMessage
 import kotlinx.coroutines.CancellationException
@@ -27,6 +29,9 @@ sealed interface RequestsScreen {
     data object Home : RequestsScreen
     data object Create : RequestsScreen
     data class Detail(val id: Long) : RequestsScreen
+
+    /** A request someone else posted, as seen by a donor who was notified about it. */
+    data class DonorDetail(val id: Long) : RequestsScreen
 }
 
 val DEADLINE_HOURS = listOf(6, 12, 24, 48, 72)
@@ -49,6 +54,9 @@ data class RequestsUiState(
     val myRequests: List<BloodRequest> = emptyList(),
     val isLoadingList: Boolean = false,
     val listError: UiMessage? = null,
+    val forMe: List<DonorRequest> = emptyList(),
+    val isLoadingForMe: Boolean = false,
+    val forMeError: UiMessage? = null,
     // Create
     val hospitals: List<Hospital> = emptyList(),
     val isLoadingHospitals: Boolean = false,
@@ -65,12 +73,17 @@ data class RequestsUiState(
     val detail: BloodRequest? = null,
     val isActing: Boolean = false,
     val detailError: UiMessage? = null,
+    // Donor detail
+    val donorDetail: DonorRequest? = null,
+    val isLoadingDonorDetail: Boolean = false,
+    val donorDetailError: UiMessage? = null,
 ) {
     fun hospitalById(id: Int?): Hospital? = hospitals.firstOrNull { it.id == id }
 }
 
 class RequestsViewModel(
     private val repository: RequestRepository,
+    private val deviceTokens: DeviceTokenManager,
     private val auth: FirebaseAuth = FirebaseAuth.getInstance(),
 ) : ViewModel() {
 
@@ -79,16 +92,72 @@ class RequestsViewModel(
 
     private var loadedUid: String? = null
     private var listJob: Job? = null
+    private var forMeJob: Job? = null
+    private var donorDetailJob: Job? = null
 
-    /** Called whenever home appears; resets for a new user, otherwise refreshes the list. */
+    /** Called whenever home appears (the profile exists by then); resets for a new user, otherwise refreshes. */
     fun onHomeShown() {
         val uid = auth.currentUser?.uid ?: return
         if (uid != loadedUid) {
             loadedUid = uid
             listJob?.cancel()
+            forMeJob?.cancel()
             _uiState.value = RequestsUiState()
+            // Once per user per app start; token refreshes are handled by the messaging service.
+            viewModelScope.launch { deviceTokens.register() }
         }
         refreshList()
+        refreshForMe()
+    }
+
+    fun refreshForMe() {
+        forMeJob?.cancel()
+        _uiState.update { it.copy(isLoadingForMe = true, forMeError = null) }
+        forMeJob = viewModelScope.launch {
+            try {
+                val forMe = repository.getForMe()
+                _uiState.update { it.copy(forMe = forMe) }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.w(TAG, "Loading requests for me failed", e)
+                _uiState.update { it.copy(forMeError = e.toUiMessage()) }
+            } finally {
+                _uiState.update { it.copy(isLoadingForMe = false) }
+            }
+        }
+    }
+
+    /** Opens the donor view of a request, e.g. from the home list or a tapped notification. */
+    fun openDonorRequest(id: Long) {
+        val known = _uiState.value.forMe.firstOrNull { it.id == id }
+        _uiState.update {
+            it.copy(
+                screen = RequestsScreen.DonorDetail(id),
+                donorDetail = known,
+                isLoadingDonorDetail = known == null,
+                donorDetailError = null,
+            )
+        }
+        donorDetailJob?.cancel()
+        donorDetailJob = viewModelScope.launch {
+            try {
+                val fresh = repository.getAsDonor(id)
+                _uiState.update { if (it.screen == RequestsScreen.DonorDetail(id)) it.copy(donorDetail = fresh) else it }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.w(TAG, "Loading request $id for a donor failed", e)
+                val message = if (e is ApiException.Http && e.code == ErrorCodes.REQUEST_NOT_FOUND) {
+                    UiMessage(R.string.donor_request_not_available)
+                } else {
+                    e.toUiMessage()
+                }
+                _uiState.update { if (it.screen == RequestsScreen.DonorDetail(id)) it.copy(donorDetailError = message) else it }
+            } finally {
+                _uiState.update { it.copy(isLoadingDonorDetail = false) }
+            }
+        }
     }
 
     fun refreshList() {
@@ -277,7 +346,9 @@ class RequestsViewModel(
     fun backToHome() {
         val state = _uiState.value
         if (state.isSubmitting || state.isActing) return
-        _uiState.update { it.copy(screen = RequestsScreen.Home, showConfirm = false, detailError = null) }
+        _uiState.update {
+            it.copy(screen = RequestsScreen.Home, showConfirm = false, detailError = null, donorDetailError = null)
+        }
     }
 
     private fun RequestsUiState.withUpdated(request: BloodRequest) =

@@ -164,4 +164,24 @@
     <string name="request_cancel_confirm_title">Cancel this request?</string>
     <string name="request_cancel_confirm_message">The request will close and can\'t be reopened.</string>
     <string name="request_error_not_open">This request is no longer open.</string>
+
+    <!-- Requests for donors -->
+    <string name="home_for_me">Requests you can help with</string>
+    <string name="donor_request_title">%1$s %2$s needed</string>
+    <string name="donor_request_place">%1$s, %2$s</string>
+    <string name="donor_request_area_label">Area</string>
+    <string name="donor_button_can_help_soon">I can help · Coming soon</string>
+    <string name="donor_request_closed">This request is closed. Thank you for being ready to help.</string>
+    <string name="donor_request_not_available">This request is no longer available.</string>
+
+    <!-- Notifications -->
+    <string name="notification_channel_urgent_name">Urgent blood requests</string>
+    <string name="notification_channel_urgent_description">When someone nearby needs your blood type</string>
+    <string name="notifications_explainer_title">Get notified when you can help</string>
+    <string name="notifications_explainer_body">We\'ll only notify you when someone nearby needs your blood type.</string>
+    <string name="notifications_explainer_allow">Allow notifications</string>
+    <string name="notifications_explainer_not_now">Not now</string>
+    <string name="notifications_off_title">Notifications are off</string>
+    <string name="notifications_off_body">You won\'t hear about people nearby who need your blood type.</string>
+    <string name="notifications_off_button">Turn on notifications</string>
 </resources>

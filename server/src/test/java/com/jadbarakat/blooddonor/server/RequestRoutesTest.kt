@@ -63,7 +63,7 @@ class RequestRoutesTest {
     private fun profile(phone: String) = ProfileInput("Someone", phone, "O+", "female", 1, null, true)
 
     private fun test(block: suspend ApplicationTestBuilder.() -> Unit) = testApplication {
-        application { module(verifier, users, areas, hospitals, requests, clock) }
+        application { module(verifier, users, areas, hospitals, requests, InMemoryDeviceTokenRepository(), clock = clock) }
         block()
     }
 

@@ -63,6 +63,24 @@ data class BloodRequest(
     val closedAt: String? = null,
 )
 
+/** What a donor who was notified sees about a request (GET /requests/{id}, /requests/for-me). */
+@Serializable
+data class DonorRequest(
+    val id: Long,
+    val bloodType: String,
+    val component: String,
+    val unitsNeeded: Int,
+    val hospitalName: String,
+    val areaName: String,
+    val neededBy: String,
+    val note: String? = null,
+    val status: String,
+)
+
+/** Body of PUT and DELETE /api/v1/me/device-token. */
+@Serializable
+data class DeviceTokenBody(val token: String)
+
 /** Error body sent by the server: {"error": "<code>", "message": "<text>"}. */
 @Serializable
 internal data class ErrorBody(val error: String, val message: String = "")

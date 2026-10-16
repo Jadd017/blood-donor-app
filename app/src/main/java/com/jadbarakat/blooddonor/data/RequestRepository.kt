@@ -38,6 +38,14 @@ class RequestRepository(private val api: ApiClient) {
     suspend fun get(id: Long): BloodRequest =
         api.send(authenticated = true, configure = { url("$REQUESTS/$id") }) { it.body<BloodRequest>() }
 
+    /** Open requests this user was notified about, newest first. */
+    suspend fun getForMe(): List<DonorRequest> =
+        api.send(authenticated = true, configure = { url("$REQUESTS/for-me") }) { it.body<List<DonorRequest>>() }
+
+    /** A request this user was notified about, in the donor view (nothing about the requester). */
+    suspend fun getAsDonor(id: Long): DonorRequest =
+        api.send(authenticated = true, configure = { url("$REQUESTS/$id") }) { it.body<DonorRequest>() }
+
     suspend fun fulfill(id: Long): BloodRequest = post("$REQUESTS/$id/fulfill")
 
     suspend fun cancel(id: Long): BloodRequest = post("$REQUESTS/$id/cancel")

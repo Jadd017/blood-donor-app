@@ -4,6 +4,7 @@ import com.jadbarakat.blooddonor.server.auth.UserPrincipal
 import com.jadbarakat.blooddonor.server.data.AreaRepository
 import com.jadbarakat.blooddonor.server.data.BloodRequest
 import com.jadbarakat.blooddonor.server.data.BloodRequestRepository
+import com.jadbarakat.blooddonor.server.data.DeviceTokenRepository
 import com.jadbarakat.blooddonor.server.data.HospitalRepository
 import com.jadbarakat.blooddonor.server.data.RequestStatus
 import com.jadbarakat.blooddonor.server.data.UserProfile
@@ -16,6 +17,7 @@ import io.ktor.server.request.receive
 import io.ktor.server.response.respond
 import io.ktor.server.routing.Route
 import io.ktor.server.routing.RoutingCall
+import io.ktor.server.routing.delete
 import io.ktor.server.routing.get
 import io.ktor.server.routing.post
 import io.ktor.server.routing.put
@@ -25,11 +27,18 @@ import java.time.LocalDate
 
 const val FIREBASE_AUTH = "firebase"
 
+/** Told about every new request, e.g. to start notifying donors. Must not block. */
+fun interface RequestCreatedListener {
+    fun onRequestCreated(requestId: Long)
+}
+
 fun Route.apiV1(
     users: UserRepository,
     areas: AreaRepository,
     hospitals: HospitalRepository,
     requests: BloodRequestRepository,
+    deviceTokens: DeviceTokenRepository,
+    onRequestCreated: RequestCreatedListener,
     clock: Clock,
 ) {
     route("/api/v1") {
@@ -54,6 +63,21 @@ fun Route.apiV1(
                 call.respond(users.upsert(user.uid, user.email, input).toResponse())
             }
 
+            route("/me/device-token") {
+                put {
+                    val profile = call.requireProfile(users)
+                    val token = call.receive<DeviceTokenBody>().validToken()
+                    deviceTokens.upsert(profile.id, token, clock.instant())
+                    call.respond(HttpStatusCode.NoContent)
+                }
+
+                delete {
+                    val profile = call.requireProfile(users)
+                    deviceTokens.delete(profile.id, call.receive<DeviceTokenBody>().validToken())
+                    call.respond(HttpStatusCode.NoContent)
+                }
+            }
+
             get("/hospitals") {
                 call.requireProfile(users)
                 val areaId = call.request.queryParameters["areaId"]?.let {
@@ -70,6 +94,7 @@ fun Route.apiV1(
                         throw badRequest("unknown_hospital", "hospitalId ${input.hospitalId} does not exist")
                     }
                     val created = requests.create(profile.id, input, clock.instant())
+                    onRequestCreated.onRequestCreated(created.id)
                     call.respond(HttpStatusCode.Created, created.toResponse())
                 }
 
@@ -79,9 +104,25 @@ fun Route.apiV1(
                     call.respond(requests.listByRequester(profile.id).map { it.effective(now).toResponse() })
                 }
 
+                get("/for-me") {
+                    val profile = call.requireProfile(users)
+                    val now = clock.instant()
+                    val open = requests.listNotifiedTo(profile.id)
+                        .map { it.effective(now) }
+                        .filter { it.status == RequestStatus.OPEN }
+                    call.respond(open.map { it.toDonorResponse() })
+                }
+
+                // The owner sees everything; a donor who was notified sees the donor view; anyone else gets 404.
                 get("/{id}") {
-                    val request = call.ownedRequest(users, requests)
-                    call.respond(request.effective(clock.instant()).toResponse())
+                    val profile = call.requireProfile(users)
+                    val request = call.parameters["id"]?.toLongOrNull()?.let { requests.findById(it) }?.effective(clock.instant())
+                    when {
+                        request == null -> throw requestNotFound()
+                        request.requesterId == profile.id -> call.respond(request.toResponse())
+                        requests.isNotified(request.id, profile.id) -> call.respond(request.toDonorResponse())
+                        else -> throw requestNotFound()
+                    }
                 }
 
                 post("/{id}/fulfill") {
@@ -106,11 +147,15 @@ private suspend fun RoutingCall.requireProfile(users: UserRepository): UserProfi
 private suspend fun RoutingCall.ownedRequest(users: UserRepository, requests: BloodRequestRepository): BloodRequest {
     val profile = requireProfile(users)
     val request = parameters["id"]?.toLongOrNull()?.let { requests.findById(it) }
-    if (request == null || request.requesterId != profile.id) {
-        throw ApiException(HttpStatusCode.NotFound, "request_not_found", "No such request")
-    }
+    if (request == null || request.requesterId != profile.id) throw requestNotFound()
     return request
 }
+
+private fun requestNotFound() = ApiException(HttpStatusCode.NotFound, "request_not_found", "No such request")
+
+private fun DeviceTokenBody.validToken(): String =
+    token.trim().takeIf { it.isNotEmpty() && it.length <= 4096 && it.none(Char::isWhitespace) }
+        ?: throw badRequest("invalid_token", "token must be a non-empty FCM registration token")
 
 private suspend fun RoutingCall.closeOwnedRequest(
     users: UserRepository,

@@ -14,6 +14,7 @@ import com.google.firebase.auth.FirebaseAuthWeakPasswordException
 import com.google.firebase.auth.FirebaseUser
 import com.google.firebase.auth.GoogleAuthProvider
 import com.jadbarakat.blooddonor.R
+import com.jadbarakat.blooddonor.notifications.DeviceTokenManager
 import com.jadbarakat.blooddonor.ui.UiMessage
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -22,6 +23,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
+import kotlinx.coroutines.withTimeoutOrNull
 
 sealed interface AuthState {
     data object SignedOut : AuthState
@@ -38,6 +40,7 @@ data class AuthUiState(
 
 class AuthViewModel(
     private val auth: FirebaseAuth = FirebaseAuth.getInstance(),
+    private val deviceTokens: DeviceTokenManager? = null,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(AuthUiState(authState = stateFor(auth.currentUser)))
@@ -128,8 +131,14 @@ class AuthViewModel(
     }
 
     fun signOut() {
-        auth.signOut()
-        _uiState.value = AuthUiState(authState = AuthState.SignedOut)
+        viewModelScope.launch {
+            // Stop notifications to this phone first: the server call needs the user's ID token.
+            // Don't let a slow network keep the user signed in.
+            if (auth.currentUser != null) withTimeoutOrNull(5_000) { deviceTokens?.unregister() }
+            auth.signOut()
+            _uiState.value = AuthUiState(authState = AuthState.SignedOut)
+            deviceTokens?.deleteLocalToken()
+        }
     }
 
     fun clearMessages() {

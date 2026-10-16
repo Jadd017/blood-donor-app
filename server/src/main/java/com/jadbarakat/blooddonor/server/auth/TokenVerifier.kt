@@ -35,14 +35,17 @@ class FirebaseTokenVerifier(private val auth: FirebaseAuth) : TokenVerifier {
     }
 
     companion object {
-        fun create(credentialsPath: String, projectId: String): FirebaseTokenVerifier {
-            val file = File(credentialsPath)
-            require(file.isFile) { "Firebase service account file not found: $credentialsPath" }
-            val options = FirebaseOptions.builder()
-                .setCredentials(file.inputStream().use { GoogleCredentials.fromStream(it) })
-                .setProjectId(projectId)
-                .build()
-            return FirebaseTokenVerifier(FirebaseAuth.getInstance(FirebaseApp.initializeApp(options)))
-        }
+        fun create(app: FirebaseApp) = FirebaseTokenVerifier(FirebaseAuth.getInstance(app))
     }
+}
+
+/** The one Firebase Admin app, shared by token verification and push messaging. */
+fun initFirebase(credentialsPath: String, projectId: String): FirebaseApp {
+    val file = File(credentialsPath)
+    require(file.isFile) { "Firebase service account file not found: $credentialsPath" }
+    val options = FirebaseOptions.builder()
+        .setCredentials(file.inputStream().use { GoogleCredentials.fromStream(it) })
+        .setProjectId(projectId)
+        .build()
+    return FirebaseApp.initializeApp(options)
 }

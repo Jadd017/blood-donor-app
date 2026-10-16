@@ -1,7 +1,17 @@
 package com.jadbarakat.blooddonor.server
 
 import com.jadbarakat.blooddonor.server.auth.FirebaseTokenVerifier
-import com.jadbarakat.blooddonor.server.jobs.startExpiryJob
+import com.jadbarakat.blooddonor.server.auth.initFirebase
+import com.jadbarakat.blooddonor.server.data.ExposedDeviceTokenRepository
+import com.jadbarakat.blooddonor.server.data.ExposedMatchingRepository
+import com.jadbarakat.blooddonor.server.jobs.startBackgroundJobs
+import com.jadbarakat.blooddonor.server.matching.MatchingConfig
+import com.jadbarakat.blooddonor.server.matching.NoHelpersYet
+import com.jadbarakat.blooddonor.server.matching.WaveService
+import com.jadbarakat.blooddonor.server.push.FcmPushSender
+import com.google.firebase.messaging.FirebaseMessaging
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.launch
 import com.jadbarakat.blooddonor.server.data.ExposedAreaRepository
 import com.jadbarakat.blooddonor.server.data.ExposedBloodRequestRepository
 import com.jadbarakat.blooddonor.server.data.ExposedHospitalRepository
@@ -14,6 +24,7 @@ import org.flywaydb.core.Flyway
 import org.jetbrains.exposed.v1.jdbc.Database
 import org.slf4j.LoggerFactory
 import java.time.Clock
+import java.time.ZoneId
 import javax.sql.DataSource
 import kotlin.system.exitProcess
 
@@ -36,28 +47,55 @@ private fun start() {
     requirePostgis(dataSource)
     Flyway.configure().dataSource(dataSource).load().migrate()
 
-    val verifier = try {
-        FirebaseTokenVerifier.create(
-            credentialsPath = env("FIREBASE_CREDENTIALS_PATH"),
-            projectId = env("FIREBASE_PROJECT_ID"),
-        )
+    val firebase = try {
+        initFirebase(credentialsPath = env("FIREBASE_CREDENTIALS_PATH"), projectId = env("FIREBASE_PROJECT_ID"))
     } catch (e: IllegalArgumentException) {
         throw StartupException(e.message ?: "Firebase setup failed")
     }
+    val config = try {
+        MatchingConfig.fromEnv(System::getenv)
+    } catch (e: IllegalArgumentException) {
+        throw StartupException("Invalid matching setting: ${e.message}")
+    }
 
     val db = Database.connect(dataSource)
+    val clock = Clock.system(ZoneId.of("Asia/Beirut"))
     val requests = ExposedBloodRequestRepository(db)
+    val deviceTokens = ExposedDeviceTokenRepository(db)
+    val waves = WaveService(
+        requests = requests,
+        matching = ExposedMatchingRepository(db),
+        tokens = deviceTokens,
+        push = FcmPushSender(FirebaseMessaging.getInstance(firebase)),
+        helpers = NoHelpersYet,
+        config = config,
+        clock = clock,
+    )
     val port = System.getenv("PORT")?.toIntOrNull() ?: 8080
     embeddedServer(Netty, port = port) {
         module(
-            verifier = verifier,
+            verifier = FirebaseTokenVerifier.create(firebase),
             users = ExposedUserRepository(db),
             areas = ExposedAreaRepository(db),
             hospitals = ExposedHospitalRepository(db),
             requests = requests,
+            deviceTokens = deviceTokens,
+            // Wave 1 runs in the background so creating a request stays fast.
+            onRequestCreated = { id ->
+                launch {
+                    try {
+                        waves.runDueWaveFor(id)
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        log.error("First wave for request {} failed; the background job will retry", id, e)
+                    }
+                }
+            },
+            clock = clock,
             healthCheck = { dataSource.connection.use { it.isValid(2) } },
         )
-        startExpiryJob(requests, Clock.systemUTC())
+        startBackgroundJobs(requests, waves, clock, config.jobInterval)
     }.start(wait = true)
 }
 

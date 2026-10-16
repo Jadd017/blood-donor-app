@@ -54,6 +54,8 @@ data class BloodRequest(
     val requesterId: Long,
     val hospitalId: Int,
     val hospitalName: String,
+    /** Name of the area the hospital is in. */
+    val areaName: String,
     val bloodType: String,
     val component: String,
     val unitsNeeded: Int,
@@ -63,6 +65,8 @@ data class BloodRequest(
     val status: String,
     val createdAt: Instant,
     val closedAt: Instant?,
+    /** How many notification waves have gone out (0 = none yet). */
+    val wavesSent: Int = 0,
 ) {
     fun isOverdue(now: Instant): Boolean = !now.isBefore(neededBy)
 

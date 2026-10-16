@@ -11,6 +11,7 @@ import com.jadbarakat.blooddonor.data.ErrorCodes
 import com.jadbarakat.blooddonor.data.Profile
 import com.jadbarakat.blooddonor.data.ProfileRepository
 import com.jadbarakat.blooddonor.data.ProfileRequest
+import com.jadbarakat.blooddonor.notifications.NotificationSettings
 import com.jadbarakat.blooddonor.ui.UiMessage
 import com.jadbarakat.blooddonor.ui.toUiMessage
 import kotlinx.coroutines.CancellationException
@@ -60,12 +61,15 @@ data class ProfileUiState(
     val sexError: UiMessage? = null,
     val areaError: UiMessage? = null,
     val saveError: UiMessage? = null,
+    /** Show the "why we notify you" screen before the system permission prompt. */
+    val askNotificationPermission: Boolean = false,
 ) {
     fun areaById(id: Int?): Area? = areas.firstOrNull { it.id == id }
 }
 
 class ProfileViewModel(
     private val repository: ProfileRepository,
+    private val notificationSettings: NotificationSettings? = null,
     private val auth: FirebaseAuth = FirebaseAuth.getInstance(),
 ) : ViewModel() {
 
@@ -174,7 +178,9 @@ class ProfileViewModel(
         viewModelScope.launch {
             try {
                 val saved = repository.saveMe(form.toRequest())
-                _uiState.update { it.copy(screen = ProfileScreen.Home(saved)) }
+                _uiState.update {
+                    it.copy(screen = ProfileScreen.Home(saved), askNotificationPermission = shouldAskForNotifications(saved))
+                }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: ApiException.Http) {
@@ -193,6 +199,18 @@ class ProfileViewModel(
                 _uiState.update { it.copy(isSaving = false) }
             }
         }
+    }
+
+    /** Ask once, after saving, if this donor can't receive notifications yet and we never asked. */
+    private fun shouldAskForNotifications(profile: Profile): Boolean {
+        val settings = notificationSettings ?: return false
+        return profile.isDonor && settings.needsRuntimePermission && !settings.areEnabled() && !settings.askedForPermission
+    }
+
+    /** The explanation screen was answered (allowed or not now); don't show it again. */
+    fun notificationPromptDone() {
+        notificationSettings?.askedForPermission = true
+        _uiState.update { it.copy(askNotificationPermission = false) }
     }
 
     private fun ProfileUiState.withoutErrors() = copy(

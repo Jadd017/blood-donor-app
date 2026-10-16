@@ -58,9 +58,15 @@ import com.jadbarakat.blooddonor.R
 import com.jadbarakat.blooddonor.data.Area
 import com.jadbarakat.blooddonor.data.BLOOD_TYPES
 import com.jadbarakat.blooddonor.data.BloodRequest
+import com.jadbarakat.blooddonor.data.DonorRequest
+import com.jadbarakat.blooddonor.notifications.NotificationExplainerScreen
+import com.jadbarakat.blooddonor.notifications.NotificationSettings
+import com.jadbarakat.blooddonor.notifications.NotificationsOffHint
 import com.jadbarakat.blooddonor.data.Profile
 import com.jadbarakat.blooddonor.data.Sex
 import com.jadbarakat.blooddonor.requests.CreateRequestScreen
+import com.jadbarakat.blooddonor.requests.DonorRequestScreen
+import com.jadbarakat.blooddonor.requests.ForMeSection
 import com.jadbarakat.blooddonor.requests.MyRequestsSection
 import com.jadbarakat.blooddonor.requests.RequestDetailScreen
 import com.jadbarakat.blooddonor.requests.RequestsScreen
@@ -68,6 +74,7 @@ import com.jadbarakat.blooddonor.requests.RequestsUiState
 import com.jadbarakat.blooddonor.requests.RequestsViewModel
 import com.jadbarakat.blooddonor.ui.resolve
 import com.jadbarakat.blooddonor.ui.theme.BloodDonorTheme
+import kotlinx.coroutines.flow.MutableStateFlow
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneOffset
@@ -79,6 +86,8 @@ import java.time.format.FormatStyle
 fun ProfileRoot(
     viewModel: ProfileViewModel,
     requestsViewModel: RequestsViewModel,
+    notificationSettings: NotificationSettings,
+    pendingDonorRequestId: MutableStateFlow<Long?>,
     onSignOut: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -95,19 +104,34 @@ fun ProfileRoot(
         )
         is ProfileScreen.Home -> {
             LaunchedEffect(Unit) { requestsViewModel.onHomeShown() }
+            // A tapped notification opens that request's donor view.
+            val pendingId by pendingDonorRequestId.collectAsStateWithLifecycle()
+            LaunchedEffect(pendingId) {
+                pendingId?.let {
+                    requestsViewModel.openDonorRequest(it)
+                    pendingDonorRequestId.value = null
+                }
+            }
             val requestsState by requestsViewModel.uiState.collectAsStateWithLifecycle()
             when (requestsState.screen) {
-                RequestsScreen.Home -> HomeScreen(
-                    profile = screen.profile,
-                    area = uiState.areaById(screen.profile.areaId),
-                    requests = requestsState,
-                    onRequestBlood = requestsViewModel::openCreate,
-                    onOpenRequest = requestsViewModel::openDetail,
-                    onRetryRequests = requestsViewModel::refreshList,
-                    onEditProfile = viewModel::editProfile,
-                    onSignOut = onSignOut,
-                    modifier = modifier,
-                )
+                RequestsScreen.Home -> if (uiState.askNotificationPermission) {
+                    NotificationExplainerScreen(onDone = viewModel::notificationPromptDone, modifier = modifier)
+                } else {
+                    HomeScreen(
+                        profile = screen.profile,
+                        area = uiState.areaById(screen.profile.areaId),
+                        requests = requestsState,
+                        notificationSettings = notificationSettings,
+                        onRequestBlood = requestsViewModel::openCreate,
+                        onOpenRequest = requestsViewModel::openDetail,
+                        onOpenDonorRequest = { requestsViewModel.openDonorRequest(it.id) },
+                        onRetryRequests = requestsViewModel::refreshList,
+                        onRetryForMe = requestsViewModel::refreshForMe,
+                        onEditProfile = viewModel::editProfile,
+                        onSignOut = onSignOut,
+                        modifier = modifier,
+                    )
+                }
                 RequestsScreen.Create -> {
                     BackHandler { requestsViewModel.backToHome() }
                     CreateRequestScreen(
@@ -121,6 +145,10 @@ fun ProfileRoot(
                         onBack = requestsViewModel::backToHome,
                         modifier = modifier,
                     )
+                }
+                is RequestsScreen.DonorDetail -> {
+                    BackHandler { requestsViewModel.backToHome() }
+                    DonorRequestScreen(uiState = requestsState, onBack = requestsViewModel::backToHome, modifier = modifier)
                 }
                 is RequestsScreen.Detail -> {
                     BackHandler { requestsViewModel.backToHome() }
@@ -175,9 +203,12 @@ fun HomeScreen(
     profile: Profile,
     area: Area?,
     requests: RequestsUiState,
+    notificationSettings: NotificationSettings?,
     onRequestBlood: () -> Unit,
     onOpenRequest: (BloodRequest) -> Unit,
+    onOpenDonorRequest: (DonorRequest) -> Unit,
     onRetryRequests: () -> Unit,
+    onRetryForMe: () -> Unit,
     onEditProfile: () -> Unit,
     onSignOut: () -> Unit,
     modifier: Modifier = Modifier,
@@ -188,6 +219,9 @@ fun HomeScreen(
             style = MaterialTheme.typography.headlineMedium,
             textAlign = TextAlign.Center,
         )
+        if (profile.isDonor && notificationSettings != null) {
+            NotificationsOffHint(notificationSettings)
+        }
         Button(
             onClick = onRequestBlood,
             contentPadding = PaddingValues(vertical = 20.dp),
@@ -195,6 +229,7 @@ fun HomeScreen(
         ) {
             Text(stringResource(R.string.home_button_request_blood), style = MaterialTheme.typography.titleLarge)
         }
+        ForMeSection(uiState = requests, onOpen = onOpenDonorRequest, onRetry = onRetryForMe)
         MyRequestsSection(uiState = requests, onOpen = onOpenRequest, onRetry = onRetryRequests)
         HorizontalDivider(Modifier.padding(vertical = 8.dp))
         Text(
@@ -616,9 +651,12 @@ private fun HomePreview() {
             ),
             area = Area(1, "Hamra", "Beirut", "Beirut"),
             requests = RequestsUiState(),
+            notificationSettings = null,
             onRequestBlood = {},
             onOpenRequest = {},
+            onOpenDonorRequest = {},
             onRetryRequests = {},
+            onRetryForMe = {},
             onEditProfile = {},
             onSignOut = {},
         )
