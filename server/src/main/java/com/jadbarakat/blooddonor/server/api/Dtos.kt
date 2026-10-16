@@ -1,6 +1,8 @@
 package com.jadbarakat.blooddonor.server.api
 
 import com.jadbarakat.blooddonor.server.data.Area
+import com.jadbarakat.blooddonor.server.data.BloodRequest
+import com.jadbarakat.blooddonor.server.data.Hospital
 import com.jadbarakat.blooddonor.server.data.UserProfile
 import kotlinx.serialization.Serializable
 
@@ -31,6 +33,36 @@ data class ProfileResponse(
     val isDonor: Boolean,
 )
 
+/** Deliberately small (no coordinates): the app downloads the whole list. */
+@Serializable
+data class HospitalResponse(val id: Int, val name: String, val areaId: Int)
+
+/** Body of POST /requests. The deadline is relative so the phone's clock doesn't matter. */
+@Serializable
+data class CreateBloodRequestBody(
+    val hospitalId: Int,
+    val bloodType: String,
+    val component: String,
+    val unitsNeeded: Int,
+    val neededInHours: Int,
+    val note: String? = null,
+)
+
+@Serializable
+data class BloodRequestResponse(
+    val id: Long,
+    val hospitalId: Int,
+    val hospitalName: String,
+    val bloodType: String,
+    val component: String,
+    val unitsNeeded: Int,
+    val neededBy: String, // ISO instant, e.g. 2026-06-15T09:00:00Z
+    val note: String? = null,
+    val status: String,
+    val createdAt: String,
+    val closedAt: String? = null,
+)
+
 fun Area.toResponse() = AreaResponse(id, name, district, governorate)
 
 fun UserProfile.toResponse() = ProfileResponse(
@@ -42,4 +74,20 @@ fun UserProfile.toResponse() = ProfileResponse(
     areaId = areaId,
     lastDonationDate = lastDonationDate?.toString(),
     isDonor = isDonor,
+)
+
+fun Hospital.toResponse() = HospitalResponse(id, name, areaId)
+
+fun BloodRequest.toResponse() = BloodRequestResponse(
+    id = id,
+    hospitalId = hospitalId,
+    hospitalName = hospitalName,
+    bloodType = bloodType,
+    component = component,
+    unitsNeeded = unitsNeeded,
+    neededBy = neededBy.toString(),
+    note = note,
+    status = status,
+    createdAt = createdAt.toString(),
+    closedAt = closedAt?.toString(),
 )

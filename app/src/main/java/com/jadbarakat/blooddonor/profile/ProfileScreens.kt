@@ -5,6 +5,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -56,8 +57,15 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.jadbarakat.blooddonor.R
 import com.jadbarakat.blooddonor.data.Area
 import com.jadbarakat.blooddonor.data.BLOOD_TYPES
+import com.jadbarakat.blooddonor.data.BloodRequest
 import com.jadbarakat.blooddonor.data.Profile
 import com.jadbarakat.blooddonor.data.Sex
+import com.jadbarakat.blooddonor.requests.CreateRequestScreen
+import com.jadbarakat.blooddonor.requests.MyRequestsSection
+import com.jadbarakat.blooddonor.requests.RequestDetailScreen
+import com.jadbarakat.blooddonor.requests.RequestsScreen
+import com.jadbarakat.blooddonor.requests.RequestsUiState
+import com.jadbarakat.blooddonor.requests.RequestsViewModel
 import com.jadbarakat.blooddonor.ui.resolve
 import com.jadbarakat.blooddonor.ui.theme.BloodDonorTheme
 import java.time.Instant
@@ -68,7 +76,12 @@ import java.time.format.FormatStyle
 
 /** Everything shown after sign-in: loading, setup/edit form, or the home summary. */
 @Composable
-fun ProfileRoot(viewModel: ProfileViewModel, onSignOut: () -> Unit, modifier: Modifier = Modifier) {
+fun ProfileRoot(
+    viewModel: ProfileViewModel,
+    requestsViewModel: RequestsViewModel,
+    onSignOut: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     LaunchedEffect(Unit) { viewModel.onSignedIn() }
 
@@ -80,13 +93,47 @@ fun ProfileRoot(viewModel: ProfileViewModel, onSignOut: () -> Unit, modifier: Mo
             onSignOut = onSignOut,
             modifier = modifier,
         )
-        is ProfileScreen.Home -> HomeScreen(
-            profile = screen.profile,
-            area = uiState.areaById(screen.profile.areaId),
-            onEditProfile = viewModel::editProfile,
-            onSignOut = onSignOut,
-            modifier = modifier,
-        )
+        is ProfileScreen.Home -> {
+            LaunchedEffect(Unit) { requestsViewModel.onHomeShown() }
+            val requestsState by requestsViewModel.uiState.collectAsStateWithLifecycle()
+            when (requestsState.screen) {
+                RequestsScreen.Home -> HomeScreen(
+                    profile = screen.profile,
+                    area = uiState.areaById(screen.profile.areaId),
+                    requests = requestsState,
+                    onRequestBlood = requestsViewModel::openCreate,
+                    onOpenRequest = requestsViewModel::openDetail,
+                    onRetryRequests = requestsViewModel::refreshList,
+                    onEditProfile = viewModel::editProfile,
+                    onSignOut = onSignOut,
+                    modifier = modifier,
+                )
+                RequestsScreen.Create -> {
+                    BackHandler { requestsViewModel.backToHome() }
+                    CreateRequestScreen(
+                        uiState = requestsState,
+                        areas = uiState.areas,
+                        onFormChange = requestsViewModel::updateForm,
+                        onRetryHospitals = requestsViewModel::loadHospitals,
+                        onSubmit = requestsViewModel::submit,
+                        onConfirm = requestsViewModel::confirmSubmit,
+                        onDismissConfirm = requestsViewModel::dismissConfirm,
+                        onBack = requestsViewModel::backToHome,
+                        modifier = modifier,
+                    )
+                }
+                is RequestsScreen.Detail -> {
+                    BackHandler { requestsViewModel.backToHome() }
+                    RequestDetailScreen(
+                        uiState = requestsState,
+                        onFulfill = requestsViewModel::fulfill,
+                        onCancel = requestsViewModel::cancel,
+                        onBack = requestsViewModel::backToHome,
+                        modifier = modifier,
+                    )
+                }
+            }
+        }
         is ProfileScreen.Form -> {
             BackHandler(enabled = !screen.isNew) { viewModel.cancelEdit() }
             ProfileFormScreen(
@@ -127,15 +174,33 @@ fun LoadFailedScreen(message: String, onRetry: () -> Unit, onSignOut: () -> Unit
 fun HomeScreen(
     profile: Profile,
     area: Area?,
+    requests: RequestsUiState,
+    onRequestBlood: () -> Unit,
+    onOpenRequest: (BloodRequest) -> Unit,
+    onRetryRequests: () -> Unit,
     onEditProfile: () -> Unit,
     onSignOut: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    ScreenColumn(modifier, centered = true) {
+    ScreenColumn(modifier, centered = false) {
         Text(
             text = stringResource(R.string.home_title, profile.fullName),
             style = MaterialTheme.typography.headlineMedium,
             textAlign = TextAlign.Center,
+        )
+        Button(
+            onClick = onRequestBlood,
+            contentPadding = PaddingValues(vertical = 20.dp),
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Text(stringResource(R.string.home_button_request_blood), style = MaterialTheme.typography.titleLarge)
+        }
+        MyRequestsSection(uiState = requests, onOpen = onOpenRequest, onRetry = onRetryRequests)
+        HorizontalDivider(Modifier.padding(vertical = 8.dp))
+        Text(
+            stringResource(R.string.home_profile_section),
+            style = MaterialTheme.typography.titleMedium,
+            modifier = Modifier.fillMaxWidth(),
         )
         Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             SummaryRow(
@@ -550,6 +615,10 @@ private fun HomePreview() {
                 isDonor = true,
             ),
             area = Area(1, "Hamra", "Beirut", "Beirut"),
+            requests = RequestsUiState(),
+            onRequestBlood = {},
+            onOpenRequest = {},
+            onRetryRequests = {},
             onEditProfile = {},
             onSignOut = {},
         )

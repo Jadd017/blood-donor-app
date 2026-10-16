@@ -12,6 +12,7 @@ import com.jadbarakat.blooddonor.data.Profile
 import com.jadbarakat.blooddonor.data.ProfileRepository
 import com.jadbarakat.blooddonor.data.ProfileRequest
 import com.jadbarakat.blooddonor.ui.UiMessage
+import com.jadbarakat.blooddonor.ui.toUiMessage
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
@@ -227,18 +228,6 @@ class ProfileViewModel(
         lastDonationDate = lastDonationDate?.toString(), // LocalDate.toString() is ISO yyyy-MM-dd
         isDonor = isDonor,
     )
-
-    private fun Exception.toUiMessage(): UiMessage = when (this) {
-        is ApiException.Unreachable -> UiMessage(R.string.api_error_unreachable)
-        is ApiException.NotSignedIn -> UiMessage(R.string.error_session_expired)
-        is ApiException.Http -> when {
-            code == ErrorCodes.EMAIL_NOT_VERIFIED -> UiMessage(R.string.api_error_email_not_verified)
-            status == 401 -> UiMessage(R.string.error_session_expired)
-            status >= 500 -> UiMessage(R.string.api_error_server)
-            else -> UiMessage(R.string.api_error_request, listOf(code))
-        }
-        else -> UiMessage(R.string.error_unknown_generic)
-    }
 
     private companion object {
         const val TAG = "ProfileViewModel"

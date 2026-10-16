@@ -2,9 +2,14 @@ package com.jadbarakat.blooddonor.server.data
 
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import org.jetbrains.exposed.v1.core.JoinType
 import org.jetbrains.exposed.v1.core.ResultRow
+import org.jetbrains.exposed.v1.core.SortOrder
 import org.jetbrains.exposed.v1.core.Table
+import org.jetbrains.exposed.v1.core.and
 import org.jetbrains.exposed.v1.core.eq
+import org.jetbrains.exposed.v1.core.greater
+import org.jetbrains.exposed.v1.core.lessEq
 import org.jetbrains.exposed.v1.core.statements.UpdateBuilder
 import org.jetbrains.exposed.v1.javatime.CurrentTimestampWithTimeZone
 import org.jetbrains.exposed.v1.javatime.date
@@ -17,6 +22,9 @@ import org.jetbrains.exposed.v1.jdbc.transactions.transaction
 import org.jetbrains.exposed.v1.jdbc.update
 import org.postgresql.util.PSQLException
 import java.sql.SQLException
+import java.time.Instant
+import java.time.OffsetDateTime
+import java.time.ZoneOffset
 
 // Table mappings. The schema itself is owned by the Flyway migrations.
 
@@ -28,6 +36,7 @@ private object AreasTable : Table("areas") {
 }
 
 private object UsersTable : Table("users") {
+    val id = long("id").autoIncrement()
     val firebaseUid = text("firebase_uid")
     val email = text("email")
     val fullName = text("full_name")
@@ -38,6 +47,27 @@ private object UsersTable : Table("users") {
     val lastDonationDate = date("last_donation_date").nullable()
     val isDonor = bool("is_donor")
     val updatedAt = timestampWithTimeZone("updated_at")
+}
+
+private object HospitalsTable : Table("hospitals") {
+    val id = integer("id")
+    val name = text("name")
+    val areaId = integer("area_id")
+    val isActive = bool("is_active")
+}
+
+private object BloodRequestsTable : Table("blood_requests") {
+    val id = long("id").autoIncrement()
+    val requesterId = long("requester_id")
+    val hospitalId = integer("hospital_id")
+    val bloodType = text("blood_type")
+    val component = text("component")
+    val unitsNeeded = integer("units_needed")
+    val neededBy = timestampWithTimeZone("needed_by")
+    val note = text("note").nullable()
+    val status = text("status")
+    val createdAt = timestampWithTimeZone("created_at")
+    val closedAt = timestampWithTimeZone("closed_at").nullable()
 }
 
 class ExposedAreaRepository(private val db: Database) : AreaRepository {
@@ -94,6 +124,7 @@ class ExposedUserRepository(private val db: Database) : UserRepository {
     }
 
     private fun ResultRow.toProfile() = UserProfile(
+        id = this[UsersTable.id],
         firebaseUid = this[UsersTable.firebaseUid],
         email = this[UsersTable.email],
         fullName = this[UsersTable.fullName],
@@ -111,6 +142,101 @@ class ExposedUserRepository(private val db: Database) : UserRepository {
             .filterIsInstance<PSQLException>()
             .firstOrNull { it.sqlState == "23505" }
             ?.serverErrorMessage?.constraint
+}
+
+class ExposedHospitalRepository(private val db: Database) : HospitalRepository {
+
+    override suspend fun all(areaId: Int?): List<Hospital> = query(db) {
+        HospitalsTable.selectAll()
+            .where {
+                if (areaId == null) HospitalsTable.isActive eq true
+                else (HospitalsTable.isActive eq true) and (HospitalsTable.areaId eq areaId)
+            }
+            .orderBy(HospitalsTable.name)
+            .map { it.toHospital() }
+    }
+
+    override suspend fun findActive(id: Int): Hospital? = query(db) {
+        HospitalsTable.selectAll()
+            .where { (HospitalsTable.id eq id) and (HospitalsTable.isActive eq true) }
+            .singleOrNull()
+            ?.toHospital()
+    }
+
+    private fun ResultRow.toHospital() =
+        Hospital(this[HospitalsTable.id], this[HospitalsTable.name], this[HospitalsTable.areaId])
+}
+
+class ExposedBloodRequestRepository(private val db: Database) : BloodRequestRepository {
+
+    private val withHospital
+        get() = BloodRequestsTable.join(HospitalsTable, JoinType.INNER, BloodRequestsTable.hospitalId, HospitalsTable.id)
+
+    override suspend fun create(requesterId: Long, input: NewBloodRequest, now: Instant): BloodRequest = query(db) {
+        val id = BloodRequestsTable.insert {
+            it[BloodRequestsTable.requesterId] = requesterId
+            it[hospitalId] = input.hospitalId
+            it[bloodType] = input.bloodType
+            it[component] = input.component
+            it[unitsNeeded] = input.unitsNeeded
+            it[neededBy] = now.plusSeconds(input.neededInHours * 3600L).toOffset()
+            it[note] = input.note
+            it[status] = RequestStatus.OPEN
+            it[createdAt] = now.toOffset()
+        }[BloodRequestsTable.id]
+        selectById(id)!!
+    }
+
+    override suspend fun findById(id: Long): BloodRequest? = query(db) { selectById(id) }
+
+    override suspend fun listByRequester(requesterId: Long): List<BloodRequest> = query(db) {
+        withHospital.selectAll()
+            .where { BloodRequestsTable.requesterId eq requesterId }
+            .orderBy(BloodRequestsTable.createdAt to SortOrder.DESC, BloodRequestsTable.id to SortOrder.DESC)
+            .map { it.toRequest() }
+    }
+
+    override suspend fun close(id: Long, status: String, now: Instant): BloodRequest? = query(db) {
+        val updated = BloodRequestsTable.update({
+            (BloodRequestsTable.id eq id) and
+                (BloodRequestsTable.status eq RequestStatus.OPEN) and
+                (BloodRequestsTable.neededBy greater now.toOffset())
+        }) {
+            it[BloodRequestsTable.status] = status
+            it[closedAt] = now.toOffset()
+        }
+        if (updated == 0) null else selectById(id)
+    }
+
+    override suspend fun expireOverdue(now: Instant): Int = query(db) {
+        // closed_at = needed_by: the moment it actually expired, not when the job noticed.
+        BloodRequestsTable.update({
+            (BloodRequestsTable.status eq RequestStatus.OPEN) and (BloodRequestsTable.neededBy lessEq now.toOffset())
+        }) {
+            it[status] = RequestStatus.EXPIRED
+            it[closedAt] = neededBy
+        }
+    }
+
+    private fun selectById(id: Long): BloodRequest? =
+        withHospital.selectAll().where { BloodRequestsTable.id eq id }.singleOrNull()?.toRequest()
+
+    private fun ResultRow.toRequest() = BloodRequest(
+        id = this[BloodRequestsTable.id],
+        requesterId = this[BloodRequestsTable.requesterId],
+        hospitalId = this[BloodRequestsTable.hospitalId],
+        hospitalName = this[HospitalsTable.name],
+        bloodType = this[BloodRequestsTable.bloodType],
+        component = this[BloodRequestsTable.component],
+        unitsNeeded = this[BloodRequestsTable.unitsNeeded],
+        neededBy = this[BloodRequestsTable.neededBy].toInstant(),
+        note = this[BloodRequestsTable.note],
+        status = this[BloodRequestsTable.status],
+        createdAt = this[BloodRequestsTable.createdAt].toInstant(),
+        closedAt = this[BloodRequestsTable.closedAt]?.toInstant(),
+    )
+
+    private fun Instant.toOffset(): OffsetDateTime = atOffset(ZoneOffset.UTC)
 }
 
 /** Runs a blocking JDBC transaction off the request thread. */

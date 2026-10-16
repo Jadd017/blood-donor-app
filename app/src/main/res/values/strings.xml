@@ -94,4 +94,74 @@
     <string name="error_google_account_collision">This email is already registered with a password. Log in with your email and password instead.</string>
     <string name="error_unknown">Something went wrong: %1$s</string>
     <string name="error_unknown_generic">Something went wrong. Please try again.</string>
+
+    <!-- Home: blood requests -->
+    <string name="home_button_request_blood">Request blood</string>
+    <string name="home_my_requests">My requests</string>
+    <string name="home_my_requests_empty">You haven\'t posted any requests.</string>
+    <string name="home_profile_section">Your profile</string>
+    <string name="label_unknown">Unknown</string>
+
+    <!-- Blood components -->
+    <string name="component_whole_blood">Whole blood</string>
+    <string name="component_red_cells">Red cells</string>
+    <string name="component_platelets">Platelets</string>
+    <string name="component_plasma">Plasma</string>
+
+    <!-- Request status and time -->
+    <string name="request_status_open">Open</string>
+    <string name="request_status_fulfilled">Fulfilled</string>
+    <string name="request_status_cancelled">Cancelled</string>
+    <string name="request_status_expired">Expired</string>
+    <string name="request_time_left_hours">%1$d h %2$d min left</string>
+    <string name="request_time_left_minutes">%1$d min left</string>
+    <string name="request_card_title">%1$s · %2$s · %3$d units</string>
+
+    <!-- Create request -->
+    <string name="request_create_title">Request blood</string>
+    <string name="request_hospital_label">Hospital</string>
+    <string name="request_hospital_choose">Choose a hospital</string>
+    <string name="request_blood_type_label">Patient\'s blood type</string>
+    <string name="request_component_label">Needed</string>
+    <string name="request_units_label">Units</string>
+    <string name="request_units_minus">−</string>
+    <string name="request_units_plus">+</string>
+    <string name="request_deadline_label">Needed within</string>
+    <string name="request_deadline_hours">%1$d h</string>
+    <string name="request_note_label">Note (optional)</string>
+    <string name="request_note_placeholder">e.g. ICU, 3rd floor. No phone numbers or links.</string>
+    <string name="request_note_counter">%1$d / %2$d</string>
+    <string name="request_button_post">Post request</string>
+    <string name="request_button_back">Back</string>
+    <string name="request_hospital_picker_title">Choose a hospital</string>
+    <string name="request_hospital_picker_close">Close</string>
+    <string name="request_hospital_search">Search hospital or area</string>
+    <string name="request_hospital_no_results">No hospitals match your search.</string>
+    <string name="request_hospital_attribution">Hospital data © OpenStreetMap contributors</string>
+    <string name="request_confirm_title">Post this request?</string>
+    <string name="request_confirm_message">Only post real, urgent needs. Fake requests get accounts suspended.</string>
+    <string name="request_confirm_post">Post</string>
+    <string name="request_confirm_back">Go back</string>
+    <string name="request_error_hospital_required">Choose the hospital.</string>
+    <string name="request_error_hospital_unknown">This hospital is no longer available. Choose another one.</string>
+    <string name="request_error_blood_type_required">Choose the patient\'s blood type.</string>
+    <string name="request_error_component_required">Choose what is needed.</string>
+    <string name="request_error_note_phone">Remove the phone number from the note. Donors will contact you through the app.</string>
+    <string name="request_error_note_url">Remove the link from the note.</string>
+    <string name="request_error_note_too_long">The note can be at most 200 characters.</string>
+    <string name="request_error_profile_required">Complete your profile before posting a request.</string>
+
+    <!-- Request detail -->
+    <string name="request_detail_title">%1$s request</string>
+    <string name="request_needed_by_label">Needed by</string>
+    <string name="request_created_label">Posted</string>
+    <string name="request_closed_label">Closed</string>
+    <string name="request_matching_placeholder">Matching donors will be notified.</string>
+    <string name="request_button_fulfill">Mark fulfilled</string>
+    <string name="request_button_cancel">Cancel request</string>
+    <string name="request_fulfill_confirm_title">Mark as fulfilled?</string>
+    <string name="request_fulfill_confirm_message">Do this once the patient has received enough blood. The request will close.</string>
+    <string name="request_cancel_confirm_title">Cancel this request?</string>
+    <string name="request_cancel_confirm_message">The request will close and can\'t be reopened.</string>
+    <string name="request_error_not_open">This request is no longer open.</string>
 </resources>

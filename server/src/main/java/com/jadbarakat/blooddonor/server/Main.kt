@@ -1,7 +1,10 @@
 package com.jadbarakat.blooddonor.server
 
 import com.jadbarakat.blooddonor.server.auth.FirebaseTokenVerifier
+import com.jadbarakat.blooddonor.server.jobs.startExpiryJob
 import com.jadbarakat.blooddonor.server.data.ExposedAreaRepository
+import com.jadbarakat.blooddonor.server.data.ExposedBloodRequestRepository
+import com.jadbarakat.blooddonor.server.data.ExposedHospitalRepository
 import com.jadbarakat.blooddonor.server.data.ExposedUserRepository
 import com.zaxxer.hikari.HikariConfig
 import com.zaxxer.hikari.HikariDataSource
@@ -10,6 +13,7 @@ import io.ktor.server.netty.Netty
 import org.flywaydb.core.Flyway
 import org.jetbrains.exposed.v1.jdbc.Database
 import org.slf4j.LoggerFactory
+import java.time.Clock
 import javax.sql.DataSource
 import kotlin.system.exitProcess
 
@@ -42,14 +46,18 @@ private fun start() {
     }
 
     val db = Database.connect(dataSource)
+    val requests = ExposedBloodRequestRepository(db)
     val port = System.getenv("PORT")?.toIntOrNull() ?: 8080
     embeddedServer(Netty, port = port) {
         module(
             verifier = verifier,
             users = ExposedUserRepository(db),
             areas = ExposedAreaRepository(db),
+            hospitals = ExposedHospitalRepository(db),
+            requests = requests,
             healthCheck = { dataSource.connection.use { it.isValid(2) } },
         )
+        startExpiryJob(requests, Clock.systemUTC())
     }.start(wait = true)
 }
 

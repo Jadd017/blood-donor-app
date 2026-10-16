@@ -32,6 +32,37 @@ data class ProfileRequest(
     val isDonor: Boolean,
 )
 
+/** Item of GET /api/v1/hospitals. */
+@Serializable
+data class Hospital(val id: Int, val name: String, val areaId: Int)
+
+/** Body of POST /api/v1/requests. The server computes the deadline from [neededInHours]. */
+@Serializable
+data class CreateBloodRequest(
+    val hospitalId: Int,
+    val bloodType: String,
+    val component: String,
+    val unitsNeeded: Int,
+    val neededInHours: Int,
+    val note: String?,
+)
+
+/** A blood request as returned by the /api/v1/requests endpoints. Timestamps are ISO instants. */
+@Serializable
+data class BloodRequest(
+    val id: Long,
+    val hospitalId: Int,
+    val hospitalName: String,
+    val bloodType: String,
+    val component: String,
+    val unitsNeeded: Int,
+    val neededBy: String,
+    val note: String? = null,
+    val status: String,
+    val createdAt: String,
+    val closedAt: String? = null,
+)
+
 /** Error body sent by the server: {"error": "<code>", "message": "<text>"}. */
 @Serializable
 internal data class ErrorBody(val error: String, val message: String = "")
@@ -42,6 +73,28 @@ object ErrorCodes {
     const val INVALID_PHONE = "invalid_phone"
     const val INVALID_FULL_NAME = "invalid_full_name"
     const val EMAIL_NOT_VERIFIED = "email_not_verified"
+    const val PROFILE_REQUIRED = "profile_required"
+    const val UNKNOWN_HOSPITAL = "unknown_hospital"
+    const val INVALID_NOTE = "invalid_note"
+    const val NOTE_CONTAINS_PHONE = "note_contains_phone"
+    const val NOTE_CONTAINS_URL = "note_contains_url"
+    const val REQUEST_NOT_OPEN = "request_not_open"
+    const val REQUEST_NOT_FOUND = "request_not_found"
+}
+
+object RequestStatus {
+    const val OPEN = "open"
+    const val FULFILLED = "fulfilled"
+    const val CANCELLED = "cancelled"
+    const val EXPIRED = "expired"
+}
+
+object Component {
+    const val WHOLE_BLOOD = "whole_blood"
+    const val RED_CELLS = "red_cells"
+    const val PLATELETS = "platelets"
+    const val PLASMA = "plasma"
+    val ALL = listOf(WHOLE_BLOOD, RED_CELLS, PLATELETS, PLASMA)
 }
 
 object Sex {

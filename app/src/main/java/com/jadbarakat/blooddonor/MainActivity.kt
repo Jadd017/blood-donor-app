@@ -15,6 +15,7 @@ import com.jadbarakat.blooddonor.auth.AuthRoot
 import com.jadbarakat.blooddonor.auth.AuthViewModel
 import com.jadbarakat.blooddonor.profile.ProfileRoot
 import com.jadbarakat.blooddonor.profile.ProfileViewModel
+import com.jadbarakat.blooddonor.requests.RequestsViewModel
 import com.jadbarakat.blooddonor.ui.theme.BloodDonorTheme
 
 class MainActivity : ComponentActivity() {
@@ -23,6 +24,9 @@ class MainActivity : ComponentActivity() {
         val container = (application as BloodDonorApp).container
         val profileViewModelFactory = viewModelFactory {
             initializer { ProfileViewModel(container.profileRepository, container.auth) }
+        }
+        val requestsViewModelFactory = viewModelFactory {
+            initializer { RequestsViewModel(container.requestRepository, container.auth) }
         }
         enableEdgeToEdge()
         setContent {
@@ -34,6 +38,7 @@ class MainActivity : ComponentActivity() {
                     ) { onSignOut, modifier ->
                         ProfileRoot(
                             viewModel = viewModel<ProfileViewModel>(factory = profileViewModelFactory),
+                            requestsViewModel = viewModel<RequestsViewModel>(factory = requestsViewModelFactory),
                             onSignOut = onSignOut,
                             modifier = modifier,
                         )

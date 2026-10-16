@@ -7,6 +7,8 @@ import com.jadbarakat.blooddonor.server.api.apiV1
 import com.jadbarakat.blooddonor.server.auth.TokenVerifier
 import com.jadbarakat.blooddonor.server.auth.UserPrincipal
 import com.jadbarakat.blooddonor.server.data.AreaRepository
+import com.jadbarakat.blooddonor.server.data.BloodRequestRepository
+import com.jadbarakat.blooddonor.server.data.HospitalRepository
 import com.jadbarakat.blooddonor.server.data.UserRepository
 import io.ktor.http.HttpStatusCode
 import io.ktor.serialization.kotlinx.json.json
@@ -32,6 +34,8 @@ fun Application.module(
     verifier: TokenVerifier,
     users: UserRepository,
     areas: AreaRepository,
+    hospitals: HospitalRepository,
+    requests: BloodRequestRepository,
     clock: Clock = Clock.system(ZoneId.of("Asia/Beirut")),
     healthCheck: () -> Boolean = { true },
 ) {
@@ -82,6 +86,6 @@ fun Application.module(
                 else "Server OK, database NOT reachable"
             )
         }
-        apiV1(users, areas, clock)
+        apiV1(users, areas, hospitals, requests, clock)
     }
 }
