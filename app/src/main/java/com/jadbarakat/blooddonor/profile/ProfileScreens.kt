@@ -54,6 +54,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.jadbarakat.blooddonor.PendingRequest
 import com.jadbarakat.blooddonor.R
 import com.jadbarakat.blooddonor.data.Area
 import com.jadbarakat.blooddonor.data.BLOOD_TYPES
@@ -87,7 +88,7 @@ fun ProfileRoot(
     viewModel: ProfileViewModel,
     requestsViewModel: RequestsViewModel,
     notificationSettings: NotificationSettings,
-    pendingDonorRequestId: MutableStateFlow<Long?>,
+    pendingRequest: MutableStateFlow<PendingRequest?>,
     onSignOut: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -104,12 +105,12 @@ fun ProfileRoot(
         )
         is ProfileScreen.Home -> {
             LaunchedEffect(Unit) { requestsViewModel.onHomeShown() }
-            // A tapped notification opens that request's donor view.
-            val pendingId by pendingDonorRequestId.collectAsStateWithLifecycle()
-            LaunchedEffect(pendingId) {
-                pendingId?.let {
-                    requestsViewModel.openDonorRequest(it)
-                    pendingDonorRequestId.value = null
+            // A tapped notification opens that request: my own, or the donor view.
+            val pending by pendingRequest.collectAsStateWithLifecycle()
+            LaunchedEffect(pending) {
+                pending?.let {
+                    if (it.asOwner) requestsViewModel.openOwnRequest(it.id) else requestsViewModel.openDonorRequest(it.id)
+                    pendingRequest.value = null
                 }
             }
             val requestsState by requestsViewModel.uiState.collectAsStateWithLifecycle()
@@ -148,7 +149,14 @@ fun ProfileRoot(
                 }
                 is RequestsScreen.DonorDetail -> {
                     BackHandler { requestsViewModel.backToHome() }
-                    DonorRequestScreen(uiState = requestsState, onBack = requestsViewModel::backToHome, modifier = modifier)
+                    DonorRequestScreen(
+                        uiState = requestsState,
+                        onHelp = requestsViewModel::help,
+                        onWithdraw = requestsViewModel::withdrawHelp,
+                        onDonationAnswer = requestsViewModel::confirmDonation,
+                        onBack = requestsViewModel::backToHome,
+                        modifier = modifier,
+                    )
                 }
                 is RequestsScreen.Detail -> {
                     BackHandler { requestsViewModel.backToHome() }

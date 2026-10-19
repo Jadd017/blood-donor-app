@@ -61,6 +61,20 @@ data class BloodRequest(
     val status: String,
     val createdAt: String,
     val closedAt: String? = null,
+    /** Only in GET /requests/{id}: donors who committed (or donated), with their phone numbers. */
+    val helpers: List<Helper> = emptyList(),
+    /** Only in GET /requests/{id}: how many donors committed. */
+    val committedCount: Int? = null,
+)
+
+/** A donor helping with my request. */
+@Serializable
+data class Helper(
+    val fullName: String,
+    val bloodType: String? = null,
+    val phone: String,
+    val status: String,
+    val committedAt: String,
 )
 
 /** What a donor who was notified sees about a request (GET /requests/{id}, /requests/for-me). */
@@ -75,7 +89,29 @@ data class DonorRequest(
     val neededBy: String,
     val note: String? = null,
     val status: String,
+    /** In /requests/for-me: whether I committed to it. */
+    val committed: Boolean = false,
+    /** In GET /requests/{id}: my "I can help", unless I withdrew it. */
+    val myPledge: Pledge? = null,
 )
+
+/** My "I can help" for a request: where to go, and whether I may answer "Did you donate?". */
+@Serializable
+data class Pledge(
+    val status: String,
+    val committedAt: String,
+    val canConfirmDonation: Boolean,
+    val requesterFirstName: String,
+    val hospitalName: String,
+    val areaName: String,
+    val hospitalLatitude: Double? = null,
+    val hospitalLongitude: Double? = null,
+    val neededBy: String,
+)
+
+/** Body of POST /api/v1/requests/{id}/donation. */
+@Serializable
+data class DonationBody(val donated: Boolean)
 
 /** Body of PUT and DELETE /api/v1/me/device-token. */
 @Serializable
@@ -98,6 +134,19 @@ object ErrorCodes {
     const val NOTE_CONTAINS_URL = "note_contains_url"
     const val REQUEST_NOT_OPEN = "request_not_open"
     const val REQUEST_NOT_FOUND = "request_not_found"
+    const val OWN_REQUEST = "own_request"
+    const val NOT_ELIGIBLE = "not_eligible"
+    const val DONATION_TOO_RECENT = "donation_too_recent"
+    const val PLEDGE_LIMIT = "pledge_limit"
+    const val PLEDGE_CLOSED = "pledge_closed"
+    const val NO_PLEDGE = "no_pledge"
+    const val TOO_EARLY = "too_early"
+}
+
+object PledgeStatus {
+    const val COMMITTED = "committed"
+    const val DONATED = "donated"
+    const val NOT_DONATED = "not_donated"
 }
 
 object RequestStatus {

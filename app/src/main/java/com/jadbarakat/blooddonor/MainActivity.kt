@@ -46,7 +46,7 @@ class MainActivity : ComponentActivity() {
                             viewModel = viewModel<ProfileViewModel>(factory = profileViewModelFactory),
                             requestsViewModel = viewModel<RequestsViewModel>(factory = requestsViewModelFactory),
                             notificationSettings = container.notificationSettings,
-                            pendingDonorRequestId = container.pendingDonorRequestId,
+                            pendingRequest = container.pendingRequest,
                             onSignOut = onSignOut,
                             modifier = modifier,
                         )
@@ -62,10 +62,14 @@ class MainActivity : ComponentActivity() {
         handleNotificationTap(intent)
     }
 
-    /** A tapped request notification carries "requestId" (from FCM data or our own tap intent). */
+    /**
+     * A tapped request notification carries "requestId" and "view" (from FCM data or our own tap
+     * intent). "requester" opens my own request; anything else (or none, from older servers) the donor view.
+     */
     private fun handleNotificationTap(intent: Intent?) {
         val id = intent?.getStringExtra(BloodDonorMessagingService.EXTRA_REQUEST_ID)?.toLongOrNull() ?: return
+        val asOwner = intent.getStringExtra(BloodDonorMessagingService.EXTRA_VIEW) == BloodDonorMessagingService.VIEW_REQUESTER
         intent.removeExtra(BloodDonorMessagingService.EXTRA_REQUEST_ID) // don't reopen it on rotation
-        (application as BloodDonorApp).container.pendingDonorRequestId.value = id
+        (application as BloodDonorApp).container.pendingRequest.value = PendingRequest(id, asOwner)
     }
 }

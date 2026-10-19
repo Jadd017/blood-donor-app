@@ -13,6 +13,7 @@ import java.time.Duration
 import java.time.Instant
 
 const val URGENT_REQUESTS_CHANNEL = "urgent_requests"
+const val REQUEST_UPDATES_CHANNEL = "request_updates"
 
 /** A push notification. [data] is delivered to the app as key-value pairs. */
 data class PushMessage(
@@ -21,6 +22,8 @@ data class PushMessage(
     val data: Map<String, String>,
     /** Don't deliver after this (e.g. the request's deadline). */
     val expiresAt: Instant,
+    /** The Android notification channel (created by the app). */
+    val channelId: String = URGENT_REQUESTS_CHANNEL,
 )
 
 data class PushResult(
@@ -69,7 +72,7 @@ class FcmPushSender(private val messaging: FirebaseMessaging) : PushSender {
                 AndroidConfig.builder()
                     .setPriority(AndroidConfig.Priority.HIGH)
                     .setTtl(ttlMillis)
-                    .setNotification(AndroidNotification.builder().setChannelId(URGENT_REQUESTS_CHANNEL).build())
+                    .setNotification(AndroidNotification.builder().setChannelId(message.channelId).build())
                     .build()
             )
             .build()

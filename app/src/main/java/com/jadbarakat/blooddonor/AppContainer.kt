@@ -18,6 +18,9 @@ class AppContainer(context: Context) {
     val deviceTokens: DeviceTokenManager by lazy { DeviceTokenManager(apiClient, auth) }
     val notificationSettings = NotificationSettings(context.applicationContext)
 
-    /** A request to open in the donor view, set when a notification is tapped. */
-    val pendingDonorRequestId = MutableStateFlow<Long?>(null)
+    /** A request to open, set when a notification is tapped. */
+    val pendingRequest = MutableStateFlow<PendingRequest?>(null)
 }
+
+/** A request to open from a notification: my own (requester view) or someone else's (donor view). */
+data class PendingRequest(val id: Long, val asOwner: Boolean)

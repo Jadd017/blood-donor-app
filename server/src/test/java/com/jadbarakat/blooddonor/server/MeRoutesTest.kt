@@ -50,8 +50,9 @@ class MeRoutesTest {
 
     private fun test(block: suspend ApplicationTestBuilder.() -> Unit) = testApplication {
         val hospitals = FakeHospitalRepository(emptyList())
+        val requests = InMemoryBloodRequestRepository(hospitals)
         application {
-            module(verifier, users, areas, hospitals, InMemoryBloodRequestRepository(hospitals), InMemoryDeviceTokenRepository(), clock = clock)
+            module(verifier, users, areas, hospitals, requests, InMemoryDeviceTokenRepository(), InMemoryPledgeRepository(users, requests), clock = clock)
         }
         block()
     }

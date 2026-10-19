@@ -4,11 +4,18 @@ import com.jadbarakat.blooddonor.server.auth.UserPrincipal
 import com.jadbarakat.blooddonor.server.data.AreaRepository
 import com.jadbarakat.blooddonor.server.data.BloodRequest
 import com.jadbarakat.blooddonor.server.data.BloodRequestRepository
+import com.jadbarakat.blooddonor.server.data.CommitResult
 import com.jadbarakat.blooddonor.server.data.DeviceTokenRepository
 import com.jadbarakat.blooddonor.server.data.HospitalRepository
+import com.jadbarakat.blooddonor.server.data.Pledge
+import com.jadbarakat.blooddonor.server.data.PledgeRepository
+import com.jadbarakat.blooddonor.server.data.PledgeStatus
 import com.jadbarakat.blooddonor.server.data.RequestStatus
 import com.jadbarakat.blooddonor.server.data.UserProfile
 import com.jadbarakat.blooddonor.server.data.UserRepository
+import com.jadbarakat.blooddonor.server.matching.Compatibility
+import com.jadbarakat.blooddonor.server.matching.Eligibility
+import com.jadbarakat.blooddonor.server.matching.MatchingConfig
 import com.jadbarakat.blooddonor.server.validation.validate
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.auth.authenticate
@@ -23,9 +30,17 @@ import io.ktor.server.routing.post
 import io.ktor.server.routing.put
 import io.ktor.server.routing.route
 import java.time.Clock
+import java.time.Duration
+import java.time.Instant
 import java.time.LocalDate
 
 const val FIREBASE_AUTH = "firebase"
+
+/** A donor can be committed to at most this many open requests at a time. */
+const val MAX_COMMITTED_PLEDGES = 2
+
+/** A committed donor is asked "Did you donate?" once the request closes, or this long after committing. */
+val DONATION_CONFIRM_AFTER: Duration = Duration.ofHours(3)
 
 /** Told about every new request, e.g. to start notifying donors. Must not block. */
 fun interface RequestCreatedListener {
@@ -38,9 +53,45 @@ fun Route.apiV1(
     hospitals: HospitalRepository,
     requests: BloodRequestRepository,
     deviceTokens: DeviceTokenRepository,
+    pledges: PledgeRepository,
     onRequestCreated: RequestCreatedListener,
+    onRequestEvent: RequestEventListener,
+    config: MatchingConfig,
     clock: Clock,
 ) {
+    /** The owner's view, with the helpers' contact details. */
+    suspend fun ownerView(request: BloodRequest): BloodRequestResponse {
+        val helpers = pledges.helpers(request.id)
+        return request.toResponse().copy(helpers = helpers.map { it.toResponse() }, committedCount = helpers.size)
+    }
+
+    /** What a donor sees about their own pledge; null once withdrawn. */
+    suspend fun pledgeView(request: BloodRequest, pledge: Pledge): PledgeResponse? {
+        if (pledge.status == PledgeStatus.WITHDRAWN) return null
+        val location = hospitals.location(request.hospitalId)
+        return PledgeResponse(
+            status = pledge.status,
+            committedAt = pledge.committedAt.toString(),
+            canConfirmDonation = canConfirmDonation(request, pledge, clock.instant()),
+            requesterFirstName = users.findById(request.requesterId)?.fullName?.firstName().orEmpty(),
+            hospitalName = request.hospitalName,
+            areaName = request.areaName,
+            hospitalLatitude = location?.latitude,
+            hospitalLongitude = location?.longitude,
+            neededBy = request.neededBy.toString(),
+        )
+    }
+
+    suspend fun donorView(request: BloodRequest, donorId: Long): DonorRequestResponse =
+        request.toDonorResponse(myPledge = pledges.find(request.id, donorId)?.let { pledgeView(request, it) })
+
+    suspend fun RoutingCall.closeOwnedRequest(status: String) {
+        val request = ownedRequest(users, requests)
+        val closed = requests.close(request.id, status, clock.instant()) ?: throw requestNotOpen()
+        onRequestEvent.onEvent(RequestEvent.RequestClosed(closed.id))
+        respond(ownerView(closed))
+    }
+
     route("/api/v1") {
         get("/areas") {
             call.respond(areas.all().map { it.toResponse() })
@@ -107,10 +158,12 @@ fun Route.apiV1(
                 get("/for-me") {
                     val profile = call.requireProfile(users)
                     val now = clock.instant()
-                    val open = requests.listNotifiedTo(profile.id)
+                    val committed = pledges.committedRequestIds(profile.id)
+                    // Open requests, plus closed ones I committed to that still wait for "Did you donate?".
+                    val visible = requests.listNotifiedTo(profile.id)
                         .map { it.effective(now) }
-                        .filter { it.status == RequestStatus.OPEN }
-                    call.respond(open.map { it.toDonorResponse() })
+                        .filter { it.status == RequestStatus.OPEN || it.id in committed }
+                    call.respond(visible.map { it.toDonorResponse(committed = it.id in committed) })
                 }
 
                 // The owner sees everything; a donor who was notified sees the donor view; anyone else gets 404.
@@ -119,18 +172,76 @@ fun Route.apiV1(
                     val request = call.parameters["id"]?.toLongOrNull()?.let { requests.findById(it) }?.effective(clock.instant())
                     when {
                         request == null -> throw requestNotFound()
-                        request.requesterId == profile.id -> call.respond(request.toResponse())
-                        requests.isNotified(request.id, profile.id) -> call.respond(request.toDonorResponse())
+                        request.requesterId == profile.id -> call.respond(ownerView(request))
+                        requests.isNotified(request.id, profile.id) -> call.respond(donorView(request, profile.id))
                         else -> throw requestNotFound()
                     }
                 }
 
                 post("/{id}/fulfill") {
-                    call.closeOwnedRequest(users, requests, clock, RequestStatus.FULFILLED)
+                    call.closeOwnedRequest(RequestStatus.FULFILLED)
                 }
 
                 post("/{id}/cancel") {
-                    call.closeOwnedRequest(users, requests, clock, RequestStatus.CANCELLED)
+                    call.closeOwnedRequest(RequestStatus.CANCELLED)
+                }
+
+                route("/{id}/help") {
+                    // "I can help": the donor commits to go to the hospital.
+                    post {
+                        val profile = call.requireProfile(users)
+                        val request = call.requestForDonor(profile, requests, clock)
+                        if (request.status != RequestStatus.OPEN) throw requestNotOpen()
+                        val bloodType = profile.bloodType
+                        val donorTypes = Compatibility.donorTypesFor(request.bloodType, request.component)
+                        if (!profile.isDonor || bloodType == null || bloodType !in donorTypes) {
+                            throw ApiException(HttpStatusCode.Conflict, "not_eligible", "Your blood type can't be used for this request")
+                        }
+                        if (!Eligibility.hasRecovered(profile.lastDonationDate, profile.sex, LocalDate.now(clock), config)) {
+                            throw ApiException(HttpStatusCode.Conflict, "donation_too_recent", "Your last donation was too recent")
+                        }
+                        when (val result = pledges.commit(request.id, profile.id, clock.instant(), MAX_COMMITTED_PLEDGES)) {
+                            is CommitResult.Committed -> {
+                                if (result.isNew) onRequestEvent.onEvent(RequestEvent.DonorCommitted(request.id, bloodType))
+                                call.respond(pledgeView(request, result.pledge)!!)
+                            }
+                            CommitResult.LimitReached -> throw ApiException(
+                                HttpStatusCode.Conflict, "pledge_limit",
+                                "You can commit to at most $MAX_COMMITTED_PLEDGES requests at a time",
+                            )
+                            CommitResult.AlreadyConfirmed -> throw ApiException(
+                                HttpStatusCode.Conflict, "pledge_closed", "You already said whether you donated for this request",
+                            )
+                        }
+                    }
+
+                    // "I can't make it anymore".
+                    delete {
+                        val profile = call.requireProfile(users)
+                        val request = call.requestForDonor(profile, requests, clock)
+                        if (request.status != RequestStatus.OPEN) throw requestNotOpen()
+                        if (!pledges.withdraw(request.id, profile.id, clock.instant())) throw noPledge()
+                        onRequestEvent.onEvent(RequestEvent.DonorWithdrew(request.id))
+                        call.respond(HttpStatusCode.NoContent)
+                    }
+                }
+
+                // "Did you donate?"
+                post("/{id}/donation") {
+                    val profile = call.requireProfile(users)
+                    val request = call.requestForDonor(profile, requests, clock)
+                    val donated = call.receive<DonationBody>().donated
+                    val pledge = pledges.find(request.id, profile.id)
+                    if (pledge == null || pledge.status != PledgeStatus.COMMITTED) throw noPledge()
+                    if (!canConfirmDonation(request, pledge, clock.instant())) {
+                        throw ApiException(
+                            HttpStatusCode.Conflict, "too_early",
+                            "You can answer once the request closes or 3 hours after you committed",
+                        )
+                    }
+                    pledges.confirmDonation(request.id, profile.id, donated, LocalDate.now(clock), clock.instant())
+                        ?: throw noPledge()
+                    call.respond(donorView(request, profile.id))
                 }
             }
         }
@@ -151,20 +262,34 @@ private suspend fun RoutingCall.ownedRequest(users: UserRepository, requests: Bl
     return request
 }
 
+/**
+ * The request in the {id} path segment, for a donor action: 404 unless the user was notified about it.
+ * Its status is the effective one.
+ */
+private suspend fun RoutingCall.requestForDonor(profile: UserProfile, requests: BloodRequestRepository, clock: Clock): BloodRequest {
+    val request = parameters["id"]?.toLongOrNull()?.let { requests.findById(it) }?.effective(clock.instant())
+        ?: throw requestNotFound()
+    if (request.requesterId == profile.id) {
+        throw ApiException(HttpStatusCode.Conflict, "own_request", "You can't help with your own request")
+    }
+    if (!requests.isNotified(request.id, profile.id)) throw requestNotFound()
+    return request
+}
+
+/** True once a committed donor may answer "Did you donate?". */
+fun canConfirmDonation(request: BloodRequest, pledge: Pledge, now: Instant): Boolean =
+    pledge.status == PledgeStatus.COMMITTED &&
+        (request.effective(now).status != RequestStatus.OPEN || !now.isBefore(pledge.committedAt.plus(DONATION_CONFIRM_AFTER)))
+
+/** The first word of a full name: the only part of the requester's name a donor sees. */
+private fun String.firstName(): String = trim().split(Regex("\\s+")).first()
+
 private fun requestNotFound() = ApiException(HttpStatusCode.NotFound, "request_not_found", "No such request")
+
+private fun requestNotOpen() = ApiException(HttpStatusCode.Conflict, "request_not_open", "Only open requests can be changed")
+
+private fun noPledge() = ApiException(HttpStatusCode.Conflict, "no_pledge", "You haven't committed to this request")
 
 private fun DeviceTokenBody.validToken(): String =
     token.trim().takeIf { it.isNotEmpty() && it.length <= 4096 && it.none(Char::isWhitespace) }
         ?: throw badRequest("invalid_token", "token must be a non-empty FCM registration token")
-
-private suspend fun RoutingCall.closeOwnedRequest(
-    users: UserRepository,
-    requests: BloodRequestRepository,
-    clock: Clock,
-    status: String,
-) {
-    val request = ownedRequest(users, requests)
-    val closed = requests.close(request.id, status, clock.instant())
-        ?: throw ApiException(HttpStatusCode.Conflict, "request_not_open", "Only open requests can be changed")
-    respond(closed.toResponse())
-}

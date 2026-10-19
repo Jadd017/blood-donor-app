@@ -6,15 +6,19 @@ import com.jadbarakat.blooddonor.server.FakeMatchingRepository
 import com.jadbarakat.blooddonor.server.FakePushSender
 import com.jadbarakat.blooddonor.server.InMemoryBloodRequestRepository
 import com.jadbarakat.blooddonor.server.InMemoryDeviceTokenRepository
+import com.jadbarakat.blooddonor.server.InMemoryPledgeRepository
+import com.jadbarakat.blooddonor.server.InMemoryUserRepository
 import com.jadbarakat.blooddonor.server.MutableClock
 import com.jadbarakat.blooddonor.server.SentNotification
 import com.jadbarakat.blooddonor.server.data.BloodRequest
 import com.jadbarakat.blooddonor.server.data.Hospital
 import com.jadbarakat.blooddonor.server.data.NewBloodRequest
+import com.jadbarakat.blooddonor.server.data.ProfileInput
 import com.jadbarakat.blooddonor.server.data.RequestStatus
 import kotlinx.coroutines.runBlocking
 import java.time.Duration
 import java.time.Instant
+import java.time.LocalDate
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -198,6 +202,44 @@ class WaveServiceTest {
     }
 
     @Test
+    fun `committed donors stop the waves and a withdrawal resumes them`() = runBlocking {
+        val users = InMemoryUserRepository()
+        val pledges = InMemoryPledgeRepository(users, requests)
+        val waves = WaveService(requests, matching, tokens, push, { pledges.helperCount(it) }, MatchingConfig(), clock)
+        donor(2, km = 5.0)
+        donor(3, km = 25.0)
+        donor(4, km = 50.0)
+        val request = createRequest(units = 1)
+        waves.runDueWaveFor(request.id)
+        assertEquals(setOf(2L), notified(request.id))
+
+        pledges.commit(request.id, 2, clock.instant(), 2)
+        advance(30)
+        assertTrue(waves.runDueWaves().isEmpty(), "1 of 1 donors committed: no wave 2")
+        advance(30)
+        assertTrue(waves.runDueWaves().isEmpty(), "nor wave 3")
+        assertEquals(setOf(2L), notified(request.id))
+
+        pledges.withdraw(request.id, 2, clock.instant())
+        val resumed = waves.runDueWaveFor(request.id)!!
+        assertEquals(3, resumed.wave, "the latest due wave goes out right away")
+        assertEquals(setOf(2L, 3L, 4L), notified(request.id))
+    }
+
+    @Test
+    fun `a donated pledge still counts as a helper`() = runBlocking {
+        val users = InMemoryUserRepository()
+        val pledges = InMemoryPledgeRepository(users, requests)
+        val donorId = users.upsert("uid-d", "d@example.com", ProfileInput("D", "+96171000000", "O-", "male", 1, null, true)).id
+        val request = createRequest(units = 1)
+        pledges.commit(request.id, donorId, clock.instant(), 2)
+        pledges.confirmDonation(request.id, donorId, donated = true, today = LocalDate.of(2026, 6, 15), now = clock.instant())
+        assertEquals(1, pledges.helperCount(request.id))
+        pledges.commit(request.id, 99, clock.instant(), 2)
+        assertEquals(2, pledges.helperCount(request.id))
+    }
+
+    @Test
     fun `at most the configured number of donors per wave, closest first`() = runBlocking {
         (2L..8L).forEach { donor(it, km = it.toDouble()) }
         val request = createRequest()
@@ -235,7 +277,7 @@ class WaveServiceTest {
         val message = WaveService.notificationFor(request)
         assertEquals("Urgent: O- red cells needed", message.title)
         assertEquals("Rizk Hospital, Beirut. Tap if you can help.", message.body)
-        assertEquals(setOf("requestId", "bloodType", "component", "hospitalName", "areaName"), message.data.keys)
+        assertEquals(setOf("type", "view", "requestId", "bloodType", "component", "hospitalName", "areaName"), message.data.keys)
         val everything = message.title + message.body + message.data.values.joinToString()
         assertFalse("70123456" in everything)
         assertFalse("Jad" in everything)

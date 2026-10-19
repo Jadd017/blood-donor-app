@@ -4,6 +4,7 @@ import com.jadbarakat.blooddonor.server.api.ApiError
 import com.jadbarakat.blooddonor.server.api.ApiException
 import com.jadbarakat.blooddonor.server.api.FIREBASE_AUTH
 import com.jadbarakat.blooddonor.server.api.RequestCreatedListener
+import com.jadbarakat.blooddonor.server.api.RequestEventListener
 import com.jadbarakat.blooddonor.server.api.apiV1
 import com.jadbarakat.blooddonor.server.auth.TokenVerifier
 import com.jadbarakat.blooddonor.server.auth.UserPrincipal
@@ -11,7 +12,9 @@ import com.jadbarakat.blooddonor.server.data.AreaRepository
 import com.jadbarakat.blooddonor.server.data.BloodRequestRepository
 import com.jadbarakat.blooddonor.server.data.DeviceTokenRepository
 import com.jadbarakat.blooddonor.server.data.HospitalRepository
+import com.jadbarakat.blooddonor.server.data.PledgeRepository
 import com.jadbarakat.blooddonor.server.data.UserRepository
+import com.jadbarakat.blooddonor.server.matching.MatchingConfig
 import io.ktor.http.HttpStatusCode
 import io.ktor.serialization.kotlinx.json.json
 import io.ktor.server.application.Application
@@ -39,7 +42,10 @@ fun Application.module(
     hospitals: HospitalRepository,
     requests: BloodRequestRepository,
     deviceTokens: DeviceTokenRepository,
+    pledges: PledgeRepository,
     onRequestCreated: RequestCreatedListener = RequestCreatedListener {},
+    onRequestEvent: RequestEventListener = RequestEventListener {},
+    config: MatchingConfig = MatchingConfig(),
     clock: Clock = Clock.system(ZoneId.of("Asia/Beirut")),
     healthCheck: () -> Boolean = { true },
 ) {
@@ -90,6 +96,6 @@ fun Application.module(
                 else "Server OK, database NOT reachable"
             )
         }
-        apiV1(users, areas, hospitals, requests, deviceTokens, onRequestCreated, clock)
+        apiV1(users, areas, hospitals, requests, deviceTokens, pledges, onRequestCreated, onRequestEvent, config, clock)
     }
 }

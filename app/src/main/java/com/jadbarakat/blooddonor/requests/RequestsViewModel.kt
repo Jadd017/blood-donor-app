@@ -77,6 +77,8 @@ data class RequestsUiState(
     val donorDetail: DonorRequest? = null,
     val isLoadingDonorDetail: Boolean = false,
     val donorDetailError: UiMessage? = null,
+    /** Committing, withdrawing or answering "Did you donate?". */
+    val isDonorActing: Boolean = false,
 ) {
     fun hospitalById(id: Int?): Hospital? = hospitals.firstOrNull { it.id == id }
 }
@@ -156,6 +158,70 @@ class RequestsViewModel(
                 _uiState.update { if (it.screen == RequestsScreen.DonorDetail(id)) it.copy(donorDetailError = message) else it }
             } finally {
                 _uiState.update { it.copy(isLoadingDonorDetail = false) }
+            }
+        }
+    }
+
+    /** "I can help" on the open donor view. */
+    fun help() = donorAct("Committing") { id ->
+        val pledge = repository.help(id)
+        _uiState.update { state ->
+            state.copy(
+                donorDetail = state.donorDetail?.takeIf { it.id == id }?.copy(myPledge = pledge, committed = true),
+                forMe = state.forMe.map { if (it.id == id) it.copy(committed = true) else it },
+            )
+        }
+    }
+
+    /** "I can't make it anymore". */
+    fun withdrawHelp() = donorAct("Withdrawing") { id ->
+        repository.withdrawHelp(id)
+        _uiState.update { state ->
+            state.copy(
+                donorDetail = state.donorDetail?.takeIf { it.id == id }?.copy(myPledge = null, committed = false),
+                forMe = state.forMe.map { if (it.id == id) it.copy(committed = false) else it },
+            )
+        }
+    }
+
+    /** Answers "Did you donate?". */
+    fun confirmDonation(donated: Boolean) = donorAct("Confirming donation") { id ->
+        val updated = repository.confirmDonation(id, donated)
+        _uiState.update { if (it.donorDetail?.id == id) it.copy(donorDetail = updated) else it }
+        refreshForMe()
+    }
+
+    private fun donorAct(what: String, call: suspend (Long) -> Unit) {
+        val state = _uiState.value
+        val id = (state.screen as? RequestsScreen.DonorDetail)?.id ?: return
+        if (state.isDonorActing) return
+        _uiState.update { it.copy(isDonorActing = true, donorDetailError = null) }
+        viewModelScope.launch {
+            try {
+                call(id)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: ApiException.Http) {
+                val message = when (e.code) {
+                    ErrorCodes.OWN_REQUEST -> UiMessage(R.string.donor_error_own_request)
+                    ErrorCodes.NOT_ELIGIBLE -> UiMessage(R.string.donor_error_not_eligible)
+                    ErrorCodes.DONATION_TOO_RECENT -> UiMessage(R.string.donor_error_too_recent)
+                    ErrorCodes.PLEDGE_LIMIT -> UiMessage(R.string.donor_error_pledge_limit)
+                    ErrorCodes.TOO_EARLY -> UiMessage(R.string.donor_error_too_early)
+                    ErrorCodes.REQUEST_NOT_OPEN -> UiMessage(R.string.request_error_not_open)
+                    ErrorCodes.NO_PLEDGE, ErrorCodes.PLEDGE_CLOSED -> UiMessage(R.string.donor_error_changed)
+                    else -> e.toUiMessage()
+                }
+                _uiState.update { it.copy(donorDetailError = message) }
+                // The request or pledge may have changed elsewhere: show the current state.
+                runCatching { repository.getAsDonor(id) }.getOrNull()?.let { fresh ->
+                    _uiState.update { if (it.screen == RequestsScreen.DonorDetail(id)) it.copy(donorDetail = fresh) else it }
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "$what for request $id failed", e)
+                _uiState.update { it.copy(donorDetailError = e.toUiMessage()) }
+            } finally {
+                _uiState.update { it.copy(isDonorActing = false) }
             }
         }
     }
@@ -308,6 +374,23 @@ class RequestsViewModel(
         }
     }
 
+    /** Opens my own request by id, e.g. from a tapped notification. */
+    fun openOwnRequest(id: Long) {
+        val known = _uiState.value.myRequests.firstOrNull { it.id == id }
+        _uiState.update { it.copy(screen = RequestsScreen.Detail(id), detail = known, detailError = null) }
+        viewModelScope.launch {
+            try {
+                val fresh = repository.get(id)
+                _uiState.update { if (it.screen == RequestsScreen.Detail(id)) it.copy(detail = fresh).withUpdated(fresh) else it }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.w(TAG, "Loading request $id failed", e)
+                _uiState.update { if (it.screen == RequestsScreen.Detail(id)) it.copy(detailError = e.toUiMessage()) else it }
+            }
+        }
+    }
+
     fun fulfill() = act { repository.fulfill(it) }
 
     fun cancel() = act { repository.cancel(it) }
@@ -345,7 +428,7 @@ class RequestsViewModel(
     /** Back from Create or Detail to home. */
     fun backToHome() {
         val state = _uiState.value
-        if (state.isSubmitting || state.isActing) return
+        if (state.isSubmitting || state.isActing || state.isDonorActing) return
         _uiState.update {
             it.copy(screen = RequestsScreen.Home, showConfirm = false, detailError = null, donorDetailError = null)
         }

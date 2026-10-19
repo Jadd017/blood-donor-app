@@ -32,6 +32,44 @@ data class ProfileInput(
 /** An active hospital, as shown in the hospital picker. */
 data class Hospital(val id: Int, val name: String, val areaId: Int)
 
+data class GeoPoint(val latitude: Double, val longitude: Double)
+
+object PledgeStatus {
+    const val COMMITTED = "committed"
+    const val WITHDRAWN = "withdrawn"
+    const val DONATED = "donated"
+    const val NOT_DONATED = "not_donated"
+}
+
+/** A donor's "I can help" for one request. */
+data class Pledge(
+    val id: Long,
+    val requestId: Long,
+    val donorId: Long,
+    val status: String,
+    /** The latest time the donor committed (withdrawing and committing again resets it). */
+    val committedAt: Instant,
+)
+
+/** A committed (or donated) donor, as shown to the requester. */
+data class Helper(
+    val donorId: Long,
+    val fullName: String,
+    val bloodType: String?,
+    val phone: String,
+    val status: String,
+    val committedAt: Instant,
+)
+
+sealed interface CommitResult {
+    /** [isNew] is false if the donor had already committed to this request. */
+    data class Committed(val pledge: Pledge, val isNew: Boolean) : CommitResult
+    /** The donor already has the maximum number of committed pledges. */
+    data object LimitReached : CommitResult
+    /** The donor already said whether they donated for this request. */
+    data object AlreadyConfirmed : CommitResult
+}
+
 object RequestStatus {
     const val OPEN = "open"
     const val FULFILLED = "fulfilled"

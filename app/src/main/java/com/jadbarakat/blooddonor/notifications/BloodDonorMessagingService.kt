@@ -34,27 +34,52 @@ class BloodDonorMessagingService : FirebaseMessagingService() {
         val requestId = message.data[EXTRA_REQUEST_ID]?.toLongOrNull() ?: return
         val title = message.notification?.title ?: return
         val body = message.notification?.body.orEmpty()
-        showRequestNotification(this, requestId, title, body)
+        // Older servers sent new requests without a type.
+        val type = message.data[EXTRA_TYPE] ?: TYPE_NEW_REQUEST
+        val view = message.data[EXTRA_VIEW] ?: VIEW_DONOR
+        showRequestNotification(this, requestId, type, view, title, body)
     }
 
     companion object {
         const val CHANNEL_URGENT_REQUESTS = "urgent_requests"
+        const val CHANNEL_REQUEST_UPDATES = "request_updates"
 
         /** Set by FCM (from the message data) or by us on the notification's tap intent. */
         const val EXTRA_REQUEST_ID = "requestId"
 
-        /** Creates the high-importance channel; safe to call repeatedly. */
-        fun createChannel(context: Context) {
+        /** Which screen a tap opens: [VIEW_REQUESTER] (my own request) or [VIEW_DONOR]. */
+        const val EXTRA_VIEW = "view"
+        const val VIEW_REQUESTER = "requester"
+        const val VIEW_DONOR = "donor"
+
+        /** new_request, donor_committed, donor_withdrew, request_fulfilled or request_closed. */
+        private const val EXTRA_TYPE = "type"
+        private const val TYPE_NEW_REQUEST = "new_request"
+
+        /** Creates both channels; safe to call repeatedly. */
+        fun createChannels(context: Context) {
             if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
-            val channel = NotificationChannel(
+            val urgent = NotificationChannel(
                 CHANNEL_URGENT_REQUESTS,
                 context.getString(R.string.notification_channel_urgent_name),
                 NotificationManager.IMPORTANCE_HIGH,
             ).apply { description = context.getString(R.string.notification_channel_urgent_description) }
-            context.getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
+            val updates = NotificationChannel(
+                CHANNEL_REQUEST_UPDATES,
+                context.getString(R.string.notification_channel_updates_name),
+                NotificationManager.IMPORTANCE_HIGH,
+            ).apply { description = context.getString(R.string.notification_channel_updates_description) }
+            context.getSystemService(NotificationManager::class.java).createNotificationChannels(listOf(urgent, updates))
         }
 
-        private fun showRequestNotification(context: Context, requestId: Long, title: String, body: String) {
+        private fun showRequestNotification(
+            context: Context,
+            requestId: Long,
+            type: String,
+            view: String,
+            title: String,
+            body: String,
+        ) {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
                 ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
             ) return
@@ -62,14 +87,17 @@ class BloodDonorMessagingService : FirebaseMessagingService() {
             val tap = Intent(context, MainActivity::class.java).apply {
                 flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
                 putExtra(EXTRA_REQUEST_ID, requestId.toString())
+                putExtra(EXTRA_VIEW, view)
             }
+            val isOwner = view == VIEW_REQUESTER
             val pendingIntent = PendingIntent.getActivity(
                 context,
-                requestId.toInt(), // one PendingIntent per request
+                (requestId * 2 + if (isOwner) 1 else 0).toInt(), // one PendingIntent per request and view
                 tap,
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
             )
-            val notification = NotificationCompat.Builder(context, CHANNEL_URGENT_REQUESTS)
+            val channel = if (type == TYPE_NEW_REQUEST) CHANNEL_URGENT_REQUESTS else CHANNEL_REQUEST_UPDATES
+            val notification = NotificationCompat.Builder(context, channel)
                 .setSmallIcon(R.drawable.ic_stat_blood_drop)
                 .setColor(ContextCompat.getColor(context, R.color.notification_accent))
                 .setContentTitle(title)
@@ -80,7 +108,8 @@ class BloodDonorMessagingService : FirebaseMessagingService() {
                 .setContentIntent(pendingIntent)
                 .build()
             try {
-                NotificationManagerCompat.from(context).notify(TAG, requestId.toInt(), notification)
+                // One notification per request and type: a newer one of the same kind replaces it.
+                NotificationManagerCompat.from(context).notify("$TAG:$type", requestId.toInt(), notification)
             } catch (e: SecurityException) {
                 // Permission revoked between the check and the call.
             }

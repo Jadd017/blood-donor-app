@@ -2,6 +2,7 @@ package com.jadbarakat.blooddonor.server.api
 
 import com.jadbarakat.blooddonor.server.data.Area
 import com.jadbarakat.blooddonor.server.data.BloodRequest
+import com.jadbarakat.blooddonor.server.data.Helper
 import com.jadbarakat.blooddonor.server.data.Hospital
 import com.jadbarakat.blooddonor.server.data.UserProfile
 import kotlinx.serialization.Serializable
@@ -61,6 +62,20 @@ data class BloodRequestResponse(
     val status: String,
     val createdAt: String,
     val closedAt: String? = null,
+    /** Only in GET /requests/{id} for the owner: committed and donated donors, with their phones. */
+    val helpers: List<HelperResponse>? = null,
+    /** Only with [helpers]: how many donors committed (committed + donated). */
+    val committedCount: Int? = null,
+)
+
+/** A donor helping with the owner's request. Only ever sent to the owner of that request. */
+@Serializable
+data class HelperResponse(
+    val fullName: String,
+    val bloodType: String? = null,
+    val phone: String,
+    val status: String,
+    val committedAt: String,
 )
 
 /** Body of PUT and DELETE /me/device-token. */
@@ -79,7 +94,30 @@ data class DonorRequestResponse(
     val neededBy: String,
     val note: String? = null,
     val status: String,
+    /** Only in GET /requests/for-me: whether I have a committed pledge for it. */
+    val committed: Boolean? = null,
+    /** Only in GET /requests/{id}, when I committed (and didn't withdraw). */
+    val myPledge: PledgeResponse? = null,
 )
+
+/** What a committed donor needs to get there. Never the requester's phone. */
+@Serializable
+data class PledgeResponse(
+    val status: String,
+    val committedAt: String,
+    /** True once the donor may answer "Did you donate?". */
+    val canConfirmDonation: Boolean,
+    val requesterFirstName: String,
+    val hospitalName: String,
+    val areaName: String,
+    val hospitalLatitude: Double? = null,
+    val hospitalLongitude: Double? = null,
+    val neededBy: String,
+)
+
+/** Body of POST /requests/{id}/donation. */
+@Serializable
+data class DonationBody(val donated: Boolean)
 
 fun Area.toResponse() = AreaResponse(id, name, district, governorate)
 
@@ -110,7 +148,9 @@ fun BloodRequest.toResponse() = BloodRequestResponse(
     closedAt = closedAt?.toString(),
 )
 
-fun BloodRequest.toDonorResponse() = DonorRequestResponse(
+fun Helper.toResponse() = HelperResponse(fullName, bloodType, phone, status, committedAt.toString())
+
+fun BloodRequest.toDonorResponse(committed: Boolean? = null, myPledge: PledgeResponse? = null) = DonorRequestResponse(
     id = id,
     bloodType = bloodType,
     component = component,
@@ -120,4 +160,6 @@ fun BloodRequest.toDonorResponse() = DonorRequestResponse(
     neededBy = neededBy.toString(),
     note = note,
     status = status,
+    committed = committed,
+    myPledge = myPledge,
 )

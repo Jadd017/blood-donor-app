@@ -6,6 +6,12 @@ import com.jadbarakat.blooddonor.server.data.Area
 import com.jadbarakat.blooddonor.server.data.AreaRepository
 import com.jadbarakat.blooddonor.server.data.BloodRequest
 import com.jadbarakat.blooddonor.server.data.BloodRequestRepository
+import com.jadbarakat.blooddonor.server.data.CommitResult
+import com.jadbarakat.blooddonor.server.data.GeoPoint
+import com.jadbarakat.blooddonor.server.data.Helper
+import com.jadbarakat.blooddonor.server.data.Pledge
+import com.jadbarakat.blooddonor.server.data.PledgeRepository
+import com.jadbarakat.blooddonor.server.data.PledgeStatus
 import com.jadbarakat.blooddonor.server.data.DeviceTokenRepository
 import com.jadbarakat.blooddonor.server.data.MatchingRepository
 import com.jadbarakat.blooddonor.server.matching.DonorCandidate
@@ -42,6 +48,8 @@ class InMemoryUserRepository : UserRepository {
     private var nextId = 1L
 
     override suspend fun findByUid(firebaseUid: String) = rows[firebaseUid]
+
+    override suspend fun findById(id: Long) = rows.values.firstOrNull { it.id == id }
 
     override suspend fun upsert(firebaseUid: String, email: String, input: ProfileInput): UserProfile {
         val others = rows.values.filter { it.firebaseUid != firebaseUid }
@@ -81,6 +89,9 @@ class FakeHospitalRepository(
         hospitals.filter { areaId == null || it.areaId == areaId }.sortedBy { it.name }
 
     override suspend fun findActive(id: Int) = hospitals.firstOrNull { it.id == id }
+
+    /** Every hospital is at the same made-up spot in Beirut. */
+    override suspend fun location(id: Int) = GeoPoint(33.8938, 35.5018).takeIf { (hospitals + inactive).any { it.id == id } }
 
     fun name(id: Int) = (hospitals + inactive).first { it.id == id }.name
 
@@ -129,10 +140,10 @@ class InMemoryBloodRequestRepository(private val hospitals: FakeHospitalReposito
         return request.copy(status = status, closedAt = now).also { rows[id] = it }
     }
 
-    override suspend fun expireOverdue(now: Instant): Int {
+    override suspend fun expireOverdue(now: Instant): List<Long> {
         val overdue = rows.values.filter { it.status == RequestStatus.OPEN && it.isOverdue(now) }
         overdue.forEach { rows[it.id] = it.copy(status = RequestStatus.EXPIRED, closedAt = it.neededBy) }
-        return overdue.size
+        return overdue.map { it.id }
     }
 
     override suspend fun isNotified(requestId: Long, userId: Long) =
@@ -240,5 +251,75 @@ class FakePushSender : PushSender {
         val invalid = tokens.filter { it in invalidTokens }.toSet()
         val failed = tokens.filter { it in failingTokens }.toSet()
         return PushResult(delivered = tokens.toSet() - invalid - failed, invalid = invalid, failed = failed)
+    }
+}
+
+/** Mirrors ExposedPledgeRepository: one row per donor and request; confirming a donation updates the user. */
+class InMemoryPledgeRepository(
+    private val users: InMemoryUserRepository,
+    private val requests: InMemoryBloodRequestRepository,
+) : PledgeRepository {
+    val rows = mutableListOf<Pledge>()
+    private var nextId = 1L
+
+    override suspend fun commit(requestId: Long, donorId: Long, now: Instant, maxCommitted: Int): CommitResult {
+        val existing = find(requestId, donorId)
+        when (existing?.status) {
+            PledgeStatus.COMMITTED -> return CommitResult.Committed(existing, isNew = false)
+            PledgeStatus.DONATED, PledgeStatus.NOT_DONATED -> return CommitResult.AlreadyConfirmed
+        }
+        val active = rows.count { pledge ->
+            val request = requests.rows[pledge.requestId]
+            pledge.donorId == donorId && pledge.status == PledgeStatus.COMMITTED &&
+                request != null && request.status == RequestStatus.OPEN && request.neededBy.isAfter(now)
+        }
+        if (active >= maxCommitted) return CommitResult.LimitReached
+        rows.remove(existing)
+        val pledge = Pledge(existing?.id ?: nextId++, requestId, donorId, PledgeStatus.COMMITTED, now)
+        rows += pledge
+        return CommitResult.Committed(pledge, isNew = true)
+    }
+
+    override suspend fun withdraw(requestId: Long, donorId: Long, now: Instant): Boolean =
+        setStatus(requestId, donorId, PledgeStatus.WITHDRAWN) != null
+
+    override suspend fun find(requestId: Long, donorId: Long) =
+        rows.firstOrNull { it.requestId == requestId && it.donorId == donorId }
+
+    override suspend fun helpers(requestId: Long): List<Helper> =
+        rows.filter { it.requestId == requestId && it.status in HELPING }
+            .sortedWith(compareBy<Pledge> { it.committedAt }.thenBy { it.id })
+            .map { pledge ->
+                val user = users.findById(pledge.donorId)!!
+                Helper(user.id, user.fullName, user.bloodType, user.phone, pledge.status, pledge.committedAt)
+            }
+
+    override suspend fun helperCount(requestId: Long) = rows.count { it.requestId == requestId && it.status in HELPING }
+
+    override suspend fun committedDonorIds(requestId: Long) =
+        rows.filter { it.requestId == requestId && it.status == PledgeStatus.COMMITTED }.map { it.donorId }
+
+    override suspend fun committedRequestIds(donorId: Long) =
+        rows.filter { it.donorId == donorId && it.status == PledgeStatus.COMMITTED }.map { it.requestId }.toSet()
+
+    override suspend fun confirmDonation(requestId: Long, donorId: Long, donated: Boolean, today: LocalDate, now: Instant): Pledge? {
+        val pledge = setStatus(requestId, donorId, if (donated) PledgeStatus.DONATED else PledgeStatus.NOT_DONATED) ?: return null
+        if (donated) {
+            val entry = users.rows.entries.first { it.value.id == donorId }
+            val last = entry.value.lastDonationDate
+            if (last == null || last.isBefore(today)) entry.setValue(entry.value.copy(lastDonationDate = today))
+        }
+        return pledge
+    }
+
+    /** Committed -> [status]; null if there was no committed pledge. */
+    private fun setStatus(requestId: Long, donorId: Long, status: String): Pledge? {
+        val index = rows.indexOfFirst { it.requestId == requestId && it.donorId == donorId && it.status == PledgeStatus.COMMITTED }
+        if (index < 0) return null
+        return rows[index].copy(status = status).also { rows[index] = it }
+    }
+
+    private companion object {
+        val HELPING = setOf(PledgeStatus.COMMITTED, PledgeStatus.DONATED)
     }
 }

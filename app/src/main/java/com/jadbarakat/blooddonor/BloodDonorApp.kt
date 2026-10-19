@@ -9,6 +9,6 @@ class BloodDonorApp : Application() {
     override fun onCreate() {
         super.onCreate()
         // Must exist before the first push arrives, even if the app is never opened.
-        BloodDonorMessagingService.createChannel(this)
+        BloodDonorMessagingService.createChannels(this)
     }
 }

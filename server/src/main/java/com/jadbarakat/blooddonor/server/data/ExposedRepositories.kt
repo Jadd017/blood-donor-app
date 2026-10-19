@@ -10,7 +10,6 @@ import org.jetbrains.exposed.v1.core.and
 import org.jetbrains.exposed.v1.core.eq
 import org.jetbrains.exposed.v1.core.greater
 import org.jetbrains.exposed.v1.core.less
-import org.jetbrains.exposed.v1.core.lessEq
 import org.jetbrains.exposed.v1.core.statements.UpdateBuilder
 import org.jetbrains.exposed.v1.javatime.CurrentTimestampWithTimeZone
 import org.jetbrains.exposed.v1.javatime.date
@@ -97,6 +96,10 @@ class ExposedUserRepository(private val db: Database) : UserRepository {
         UsersTable.selectAll().where { UsersTable.firebaseUid eq firebaseUid }.singleOrNull()?.toProfile()
     }
 
+    override suspend fun findById(id: Long): UserProfile? = query(db) {
+        UsersTable.selectAll().where { UsersTable.id eq id }.singleOrNull()?.toProfile()
+    }
+
     override suspend fun upsert(firebaseUid: String, email: String, input: ProfileInput): UserProfile = try {
         query(db) {
             val updated = UsersTable.update({ UsersTable.firebaseUid eq firebaseUid }) {
@@ -171,6 +174,13 @@ class ExposedHospitalRepository(private val db: Database) : HospitalRepository {
             ?.toHospital()
     }
 
+    override suspend fun location(id: Int): GeoPoint? = jdbc(db) { conn ->
+        conn.prepareStatement("SELECT ST_Y(location::geometry), ST_X(location::geometry) FROM hospitals WHERE id = ?").use { st ->
+            st.setInt(1, id)
+            st.executeQuery().use { rs -> if (rs.next()) GeoPoint(rs.getDouble(1), rs.getDouble(2)) else null }
+        }
+    }
+
     private fun ResultRow.toHospital() =
         Hospital(this[HospitalsTable.id], this[HospitalsTable.name], this[HospitalsTable.areaId])
 }
@@ -213,13 +223,17 @@ class ExposedBloodRequestRepository(private val db: Database) : BloodRequestRepo
         if (updated == 0) null else selectById(id)
     }
 
-    override suspend fun expireOverdue(now: Instant): Int = query(db) {
+    override suspend fun expireOverdue(now: Instant): List<Long> = jdbc(db) { conn ->
         // closed_at = needed_by: the moment it actually expired, not when the job noticed.
-        BloodRequestsTable.update({
-            (BloodRequestsTable.status eq RequestStatus.OPEN) and (BloodRequestsTable.neededBy lessEq now.toOffset())
-        }) {
-            it[status] = RequestStatus.EXPIRED
-            it[closedAt] = neededBy
+        conn.prepareStatement(
+            """
+            UPDATE blood_requests SET status = 'expired', closed_at = needed_by
+            WHERE status = 'open' AND needed_by <= ?
+            RETURNING id
+            """.trimIndent()
+        ).use { st ->
+            st.setObject(1, now.toOffset())
+            st.executeQuery().use { rs -> buildList { while (rs.next()) add(rs.getLong(1)) } }
         }
     }
 

@@ -63,7 +63,7 @@ class RequestRoutesTest {
     private fun profile(phone: String) = ProfileInput("Someone", phone, "O+", "female", 1, null, true)
 
     private fun test(block: suspend ApplicationTestBuilder.() -> Unit) = testApplication {
-        application { module(verifier, users, areas, hospitals, requests, InMemoryDeviceTokenRepository(), clock = clock) }
+        application { module(verifier, users, areas, hospitals, requests, InMemoryDeviceTokenRepository(), InMemoryPledgeRepository(users, requests), clock = clock) }
         block()
     }
 
@@ -324,13 +324,13 @@ class RequestRoutesTest {
         action(cancelled, "cancel")
 
         clock.now = clock.now.plus(Duration.ofHours(8))
-        assertEquals(1, requests.expireOverdue(clock.instant()))
+        assertEquals(listOf(short), requests.expireOverdue(clock.instant()))
 
         assertEquals(RequestStatus.EXPIRED, requests.rows.getValue(short).status)
         assertEquals(Instant.parse("2026-06-15T15:00:00Z"), requests.rows.getValue(short).closedAt)
         assertEquals(RequestStatus.OPEN, requests.rows.getValue(long).status)
         assertEquals(RequestStatus.CANCELLED, requests.rows.getValue(cancelled).status)
         // Running again changes nothing.
-        assertEquals(0, requests.expireOverdue(clock.instant()))
+        assertEquals(emptyList(), requests.expireOverdue(clock.instant()))
     }
 }

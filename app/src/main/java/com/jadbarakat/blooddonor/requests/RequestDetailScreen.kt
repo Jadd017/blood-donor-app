@@ -1,5 +1,9 @@
 package com.jadbarakat.blooddonor.requests
 
+import android.content.ActivityNotFoundException
+import android.content.Context
+import android.content.Intent
+import android.net.Uri
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -12,6 +16,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
@@ -23,11 +28,14 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.jadbarakat.blooddonor.R
 import com.jadbarakat.blooddonor.data.BloodRequest
+import com.jadbarakat.blooddonor.data.Helper
+import com.jadbarakat.blooddonor.data.PledgeStatus
 import com.jadbarakat.blooddonor.data.RequestStatus
 import com.jadbarakat.blooddonor.ui.resolve
 import java.time.Instant
@@ -42,7 +50,23 @@ fun RequestDetailScreen(
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val request = uiState.detail ?: return
+    val request = uiState.detail
+    if (request == null) {
+        // Opened by id (e.g. from a notification) and still loading, or loading failed.
+        Column(
+            modifier = modifier.fillMaxSize().padding(24.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            uiState.detailError?.let {
+                Text(it.resolve(), textAlign = TextAlign.Center, modifier = Modifier.padding(top = 48.dp))
+            } ?: CircularProgressIndicator(Modifier.padding(top = 48.dp))
+            TextButton(onClick = onBack, modifier = Modifier.fillMaxWidth()) {
+                Text(stringResource(R.string.request_button_back))
+            }
+        }
+        return
+    }
     val now = rememberNow()
     val status = request.effectiveStatus(now)
     var pending by rememberSaveable { mutableStateOf<PendingAction?>(null) }
@@ -79,14 +103,25 @@ fun RequestDetailScreen(
         }
         request.note?.let { DetailRow(stringResource(R.string.request_note_label), it) }
 
-        if (status == RequestStatus.OPEN) {
+        request.committedCount?.let { committed ->
             Card(Modifier.fillMaxWidth()) {
-                Text(
-                    stringResource(R.string.request_matching_placeholder),
-                    style = MaterialTheme.typography.bodyMedium,
-                    modifier = Modifier.padding(16.dp),
-                )
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        stringResource(R.string.request_progress, committed, request.unitsNeeded),
+                        style = MaterialTheme.typography.titleMedium,
+                    )
+                    LinearProgressIndicator(
+                        progress = { (committed.toFloat() / request.unitsNeeded).coerceIn(0f, 1f) },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    if (committed == 0 && status == RequestStatus.OPEN) {
+                        Text(stringResource(R.string.request_matching_placeholder), style = MaterialTheme.typography.bodyMedium)
+                    }
+                }
             }
+        }
+        if (request.helpers.isNotEmpty()) {
+            HelpersList(request.helpers)
         }
 
         uiState.detailError?.let {
@@ -145,6 +180,53 @@ fun RequestDetailScreen(
                 TextButton(onClick = { pending = null }) { Text(stringResource(R.string.request_confirm_back)) }
             },
         )
+    }
+}
+
+/** The donors who committed, each with a Call button. Only the owner gets this data. */
+@Composable
+private fun HelpersList(helpers: List<Helper>) {
+    val context = LocalContext.current
+    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(stringResource(R.string.request_helpers_title), style = MaterialTheme.typography.titleMedium)
+        helpers.forEach { helper ->
+            Card(Modifier.fillMaxWidth()) {
+                Row(
+                    Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text(helper.fullName, style = MaterialTheme.typography.bodyLarge)
+                        Text(
+                            listOfNotNull(
+                                helper.bloodType,
+                                stringResource(R.string.request_helper_donated).takeIf { helper.status == PledgeStatus.DONATED },
+                            ).joinToString(" · "),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    OutlinedButton(onClick = { dial(context, helper.phone) }) {
+                        Text(stringResource(R.string.request_helper_call))
+                    }
+                }
+            }
+        }
+        Text(
+            stringResource(R.string.request_helpers_hint),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+/** Opens the dialer with [phone] filled in; ACTION_DIAL needs no call permission. */
+private fun dial(context: Context, phone: String) {
+    try {
+        context.startActivity(Intent(Intent.ACTION_DIAL, Uri.fromParts("tel", phone, null)))
+    } catch (_: ActivityNotFoundException) {
+        // No dialer (e.g. a tablet); nothing useful to do.
     }
 }
 

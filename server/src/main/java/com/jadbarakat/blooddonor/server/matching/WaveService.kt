@@ -14,13 +14,13 @@ import java.time.Instant
 import java.time.LocalDate
 import kotlin.time.toJavaDuration
 
-/** How many donors are already helping with a request. Phase 4c ("I can help") will implement this. */
+/**
+ * How many donors are helping with a request (committed + donated pledges). Once it reaches
+ * units_needed, due waves are held back, not used up, so they go out if a donor withdraws.
+ */
 fun interface HelperCounter {
     suspend fun helpersFor(requestId: Long): Int
 }
-
-/** Until phase 4c nobody can respond, so nobody is helping yet. */
-val NoHelpersYet = HelperCounter { 0 }
 
 data class WaveResult(
     val requestId: Long,
@@ -114,6 +114,8 @@ class WaveService(
             title = "Urgent: ${request.bloodType} ${componentName(request.component)} needed",
             body = "${request.hospitalName}, ${request.areaName}. Tap if you can help.",
             data = mapOf(
+                "type" to "new_request",
+                "view" to "donor",
                 "requestId" to request.id.toString(),
                 "bloodType" to request.bloodType,
                 "component" to request.component,

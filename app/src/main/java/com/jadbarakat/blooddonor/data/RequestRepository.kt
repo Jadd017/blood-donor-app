@@ -46,6 +46,39 @@ class RequestRepository(private val api: ApiClient) {
     suspend fun getAsDonor(id: Long): DonorRequest =
         api.send(authenticated = true, configure = { url("$REQUESTS/$id") }) { it.body<DonorRequest>() }
 
+    /** "I can help". Committing again to the same request is harmless. */
+    suspend fun help(id: Long): Pledge =
+        api.send(
+            authenticated = true,
+            configure = {
+                method = HttpMethod.Post
+                url("$REQUESTS/$id/help")
+            },
+        ) { it.body<Pledge>() }
+
+    /** "I can't make it anymore". */
+    suspend fun withdrawHelp(id: Long) {
+        api.send(
+            authenticated = true,
+            configure = {
+                method = HttpMethod.Delete
+                url("$REQUESTS/$id/help")
+            },
+        ) { }
+    }
+
+    /** Answers "Did you donate?"; returns the updated donor view. */
+    suspend fun confirmDonation(id: Long, donated: Boolean): DonorRequest =
+        api.send(
+            authenticated = true,
+            configure = {
+                method = HttpMethod.Post
+                url("$REQUESTS/$id/donation")
+                contentType(ContentType.Application.Json)
+                setBody(DonationBody(donated))
+            },
+        ) { it.body<DonorRequest>() }
+
     suspend fun fulfill(id: Long): BloodRequest = post("$REQUESTS/$id/fulfill")
 
     suspend fun cancel(id: Long): BloodRequest = post("$REQUESTS/$id/cancel")

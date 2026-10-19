@@ -60,7 +60,7 @@ class DonorRoutesTest {
 
     private fun test(block: suspend ApplicationTestBuilder.() -> Unit) = testApplication {
         application {
-            module(verifier, users, areas, hospitals, requests, deviceTokens, onRequestCreated = { created += it }, clock = clock)
+            module(verifier, users, areas, hospitals, requests, deviceTokens, InMemoryPledgeRepository(users, requests), onRequestCreated = { created += it }, clock = clock)
         }
         block()
     }

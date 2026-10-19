@@ -6,9 +6,12 @@ import com.jadbarakat.blooddonor.server.data.ExposedDeviceTokenRepository
 import com.jadbarakat.blooddonor.server.data.ExposedMatchingRepository
 import com.jadbarakat.blooddonor.server.jobs.startBackgroundJobs
 import com.jadbarakat.blooddonor.server.matching.MatchingConfig
-import com.jadbarakat.blooddonor.server.matching.NoHelpersYet
+import com.jadbarakat.blooddonor.server.api.RequestEvent
+import com.jadbarakat.blooddonor.server.data.ExposedPledgeRepository
+import com.jadbarakat.blooddonor.server.matching.HelperCounter
 import com.jadbarakat.blooddonor.server.matching.WaveService
 import com.jadbarakat.blooddonor.server.push.FcmPushSender
+import com.jadbarakat.blooddonor.server.push.RequestNotifier
 import com.google.firebase.messaging.FirebaseMessaging
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
@@ -62,15 +65,18 @@ private fun start() {
     val clock = Clock.system(ZoneId.of("Asia/Beirut"))
     val requests = ExposedBloodRequestRepository(db)
     val deviceTokens = ExposedDeviceTokenRepository(db)
+    val pledges = ExposedPledgeRepository(db)
+    val push = FcmPushSender(FirebaseMessaging.getInstance(firebase))
     val waves = WaveService(
         requests = requests,
         matching = ExposedMatchingRepository(db),
         tokens = deviceTokens,
-        push = FcmPushSender(FirebaseMessaging.getInstance(firebase)),
-        helpers = NoHelpersYet,
+        push = push,
+        helpers = HelperCounter { pledges.helperCount(it) },
         config = config,
         clock = clock,
     )
+    val notifier = RequestNotifier(requests, pledges, deviceTokens, push, clock)
     val port = System.getenv("PORT")?.toIntOrNull() ?: 8080
     embeddedServer(Netty, port = port) {
         module(
@@ -80,6 +86,7 @@ private fun start() {
             hospitals = ExposedHospitalRepository(db),
             requests = requests,
             deviceTokens = deviceTokens,
+            pledges = pledges,
             // Wave 1 runs in the background so creating a request stays fast.
             onRequestCreated = { id ->
                 launch {
@@ -92,10 +99,24 @@ private fun start() {
                     }
                 }
             },
+            // Push notifications run in the background; a withdrawal may also free up the next wave.
+            onRequestEvent = { event ->
+                launch {
+                    try {
+                        notifier.handle(event)
+                        if (event is RequestEvent.DonorWithdrew) waves.runDueWaveFor(event.requestId)
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        log.error("Handling {} failed", event, e)
+                    }
+                }
+            },
+            config = config,
             clock = clock,
             healthCheck = { dataSource.connection.use { it.isValid(2) } },
         )
-        startBackgroundJobs(requests, waves, clock, config.jobInterval)
+        startBackgroundJobs(requests, waves, notifier, clock, config.jobInterval)
     }.start(wait = true)
 }
 
