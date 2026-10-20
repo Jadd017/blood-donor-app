@@ -15,6 +15,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -50,6 +51,7 @@ fun RequestDetailScreen(
     onFulfill: () -> Unit,
     onCancel: () -> Unit,
     onConfirmHelper: (pledgeId: Long, outcome: String) -> Unit,
+    onBlockHelper: (donorId: Long) -> Unit,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -76,6 +78,8 @@ fun RequestDetailScreen(
     // The helper being confirmed, and as what (HelperOutcome).
     var pendingHelper by rememberSaveable { mutableStateOf<Long?>(null) }
     var pendingOutcome by rememberSaveable { mutableStateOf<String?>(null) }
+    // The helper (donor id) about to be blocked.
+    var pendingBlock by rememberSaveable { mutableStateOf<Long?>(null) }
 
     Column(
         modifier = modifier
@@ -94,6 +98,17 @@ fun RequestDetailScreen(
         }
         timeLeftText(request, now)?.let {
             Text(it, style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
+        }
+        if (request.hidden) {
+            Card(
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(stringResource(R.string.request_hidden_title), style = MaterialTheme.typography.titleMedium)
+                    Text(stringResource(R.string.request_hidden_message), style = MaterialTheme.typography.bodyMedium)
+                }
+            }
         }
 
         DetailRow(stringResource(R.string.request_hospital_label), request.hospitalName)
@@ -130,16 +145,21 @@ fun RequestDetailScreen(
         if (request.helpers.isNotEmpty()) {
             HelpersList(
                 helpers = request.helpers,
+                blocked = uiState.blockedHelperIds,
                 enabled = !uiState.isActing,
                 onConfirm = { pledgeId, outcome ->
                     pendingHelper = pledgeId
                     pendingOutcome = outcome
                 },
+                onBlock = { pendingBlock = it },
             )
         }
 
         uiState.detailError?.let {
             Text(it.resolve(), color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium)
+        }
+        uiState.detailInfo?.let {
+            Text(it.resolve(), color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.bodyMedium)
         }
 
         if (status == RequestStatus.OPEN) {
@@ -208,6 +228,24 @@ fun RequestDetailScreen(
         )
     }
 
+    request.helpers.firstOrNull { it.donorId != null && it.donorId == pendingBlock }?.let { helper ->
+        val firstName = helper.fullName.trim().substringBefore(' ')
+        AlertDialog(
+            onDismissRequest = { pendingBlock = null },
+            title = { Text(stringResource(R.string.block_helper_confirm_title, firstName)) },
+            text = { Text(stringResource(R.string.block_helper_confirm_message, firstName)) },
+            confirmButton = {
+                TextButton(onClick = {
+                    pendingBlock = null
+                    helper.donorId?.let(onBlockHelper)
+                }) { Text(stringResource(R.string.block_helper_confirm_button)) }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingBlock = null }) { Text(stringResource(R.string.request_confirm_back)) }
+            },
+        )
+    }
+
     pending?.let { action ->
         val (title, message, confirm) = when (action) {
             PendingAction.FULFILL -> Triple(
@@ -243,7 +281,13 @@ fun RequestDetailScreen(
  * come" buttons. Only the owner gets this data.
  */
 @Composable
-private fun HelpersList(helpers: List<Helper>, enabled: Boolean, onConfirm: (pledgeId: Long, outcome: String) -> Unit) {
+private fun HelpersList(
+    helpers: List<Helper>,
+    blocked: Set<Long>,
+    enabled: Boolean,
+    onConfirm: (pledgeId: Long, outcome: String) -> Unit,
+    onBlock: (donorId: Long) -> Unit,
+) {
     val context = LocalContext.current
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(stringResource(R.string.request_helpers_title), style = MaterialTheme.typography.titleMedium)
@@ -276,8 +320,11 @@ private fun HelpersList(helpers: List<Helper>, enabled: Boolean, onConfirm: (ple
                                 },
                             )
                         }
-                        OutlinedButton(onClick = { dial(context, helper.phone) }) {
-                            Text(stringResource(R.string.request_helper_call))
+                        // No phone once the donor deleted their account.
+                        if (helper.phone.isNotBlank()) {
+                            OutlinedButton(onClick = { dial(context, helper.phone) }) {
+                                Text(stringResource(R.string.request_helper_call))
+                            }
                         }
                     }
                     if (helper.canConfirm) {
@@ -292,6 +339,16 @@ private fun HelpersList(helpers: List<Helper>, enabled: Boolean, onConfirm: (ple
                                 enabled = enabled,
                                 modifier = Modifier.weight(1f),
                             ) { Text(stringResource(R.string.request_helper_button_no_show)) }
+                        }
+                    }
+                    helper.donorId?.let { donorId ->
+                        val isBlocked = donorId in blocked
+                        TextButton(
+                            onClick = { onBlock(donorId) },
+                            enabled = enabled && !isBlocked,
+                            modifier = Modifier.align(Alignment.End),
+                        ) {
+                            Text(stringResource(if (isBlocked) R.string.block_helper_blocked else R.string.block_helper_button))
                         }
                     }
                 }

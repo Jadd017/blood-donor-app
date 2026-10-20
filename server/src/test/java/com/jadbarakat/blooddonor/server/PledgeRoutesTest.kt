@@ -4,6 +4,7 @@ import com.jadbarakat.blooddonor.server.api.RequestEvent
 import com.jadbarakat.blooddonor.server.auth.VerifiedToken
 import com.jadbarakat.blooddonor.server.data.Area
 import com.jadbarakat.blooddonor.server.data.Hospital
+import com.jadbarakat.blooddonor.server.data.NewBloodRequest
 import com.jadbarakat.blooddonor.server.data.PledgeStatus
 import com.jadbarakat.blooddonor.server.data.ProfileInput
 import io.ktor.client.request.bearerAuth
@@ -67,7 +68,7 @@ class PledgeRoutesTest {
 
     private fun test(block: suspend ApplicationTestBuilder.() -> Unit) = testApplication {
         application {
-            module(verifier, users, areas, hospitals, requests, InMemoryDeviceTokenRepository(), pledges, onRequestEvent = { events += it }, clock = clock)
+            module(verifier, users, areas, hospitals, requests, InMemoryDeviceTokenRepository(), pledges, InMemorySafetyRepository(users, requests, pledges), FakeAccountDeleter(), onRequestEvent = { events += it }, clock = clock)
         }
         block()
     }
@@ -76,14 +77,9 @@ class PledgeRoutesTest {
     private fun JsonObject.str(key: String) = this[key]!!.jsonPrimitive.content
 
     /** An O- red cells request by Alice; [notified] users were sent the notification. */
-    private suspend fun ApplicationTestBuilder.createRequest(units: Int = 2, notified: List<Long> = listOf(bobId, erinId, frankId)): Long {
-        val response = client.post("/api/v1/requests") {
-            bearerAuth("alice-token")
-            contentType(ContentType.Application.Json)
-            setBody("""{"hospitalId":10,"bloodType":"O-","component":"red_cells","unitsNeeded":$units,"neededInHours":6,"note":"ICU, 3rd floor"}""")
-        }
-        assertEquals(HttpStatusCode.Created, response.status)
-        val id = json(response.bodyAsText()).str("id").toLong()
+    // Inserted directly: these are scenario setups, and the posting rules are tested in SafetyRoutesTest.
+    private suspend fun createRequest(units: Int = 2, notified: List<Long> = listOf(bobId, erinId, frankId)): Long {
+        val id = requests.create(aliceId, NewBloodRequest(10, "O-", "red_cells", units, 6, "ICU, 3rd floor"), clock.instant()).id
         notified.forEach { requests.notifications += SentNotification(id, it, 1, clock.instant()) }
         return id
     }

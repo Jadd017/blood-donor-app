@@ -52,7 +52,7 @@ class MeRoutesTest {
         val hospitals = FakeHospitalRepository(emptyList())
         val requests = InMemoryBloodRequestRepository(hospitals)
         application {
-            module(verifier, users, areas, hospitals, requests, InMemoryDeviceTokenRepository(), InMemoryPledgeRepository(users, requests), clock = clock)
+            module(verifier, users, areas, hospitals, requests, InMemoryDeviceTokenRepository(), InMemoryPledgeRepository(users, requests), InMemorySafetyRepository(users, requests), FakeAccountDeleter(), clock = clock)
         }
         block()
     }

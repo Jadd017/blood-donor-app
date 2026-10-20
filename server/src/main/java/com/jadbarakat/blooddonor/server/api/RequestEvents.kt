@@ -10,6 +10,8 @@ sealed interface RequestEvent {
     data class HelperNoShow(override val requestId: Long) : RequestEvent
     /** Fulfilled, cancelled or expired. */
     data class RequestClosed(override val requestId: Long) : RequestEvent
+    /** Hidden (and closed) after reports from several users. */
+    data class RequestHidden(override val requestId: Long) : RequestEvent
 }
 
 /** Told about every [RequestEvent], e.g. to send push notifications. Must not block. */

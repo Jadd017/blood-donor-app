@@ -91,6 +91,30 @@ class RequestRepository(private val api: ApiClient) {
             },
         ) { it.body<BloodRequest>() }
 
+    /** Reports a request I was notified about; [reason] is one of [ReportReason]. */
+    suspend fun report(id: Long, reason: String, details: String?) {
+        api.send(
+            authenticated = true,
+            configure = {
+                method = HttpMethod.Post
+                url("$REQUESTS/$id/report")
+                contentType(ContentType.Application.Json)
+                setBody(ReportBody(reason, details))
+            },
+        ) { }
+    }
+
+    /** Blocks the person who posted request [id], without ever learning who they are. */
+    suspend fun blockRequester(id: Long) {
+        api.send(
+            authenticated = true,
+            configure = {
+                method = HttpMethod.Post
+                url("$REQUESTS/$id/block-requester")
+            },
+        ) { }
+    }
+
     suspend fun fulfill(id: Long): BloodRequest = post("$REQUESTS/$id/fulfill")
 
     suspend fun cancel(id: Long): BloodRequest = post("$REQUESTS/$id/cancel")

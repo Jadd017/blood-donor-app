@@ -35,6 +35,9 @@ sealed interface ProfileScreen {
 
     data class Home(val profile: Profile) : ProfileScreen
 
+    /** Blocked users, notification status and account deletion, opened from home. */
+    data class Settings(val profile: Profile) : ProfileScreen
+
     /** The profile form; [original] is the saved profile when editing, null for first-time setup. */
     data class Form(val original: Profile?) : ProfileScreen {
         val isNew: Boolean get() = original == null
@@ -119,6 +122,17 @@ class ProfileViewModel(
                 _uiState.update { it.copy(screen = ProfileScreen.LoadFailed(e.toUiMessage())) }
             }
         }
+    }
+
+    fun openSettings() {
+        val profile = (_uiState.value.screen as? ProfileScreen.Home)?.profile ?: return
+        _uiState.update { it.copy(screen = ProfileScreen.Settings(profile)) }
+    }
+
+    /** Back to home, with the profile as just loaded by the settings screen if there is one. */
+    fun closeSettings(fresh: Profile?) {
+        val profile = (_uiState.value.screen as? ProfileScreen.Settings)?.profile ?: return
+        _uiState.update { it.copy(screen = ProfileScreen.Home(fresh ?: profile)) }
     }
 
     fun editProfile() {

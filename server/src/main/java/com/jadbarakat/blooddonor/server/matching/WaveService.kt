@@ -88,7 +88,7 @@ class WaveService(
 
         val radiusKm = config.waves[wave - 1].radiusKm
         val donorTypes = Compatibility.donorTypesFor(request.bloodType, request.component)
-        val found = matching.candidates(request, donorTypes, radiusKm?.times(1000), now.minusSeconds(24 * 3600))
+        val found = matching.candidates(request, donorTypes, radiusKm?.times(1000), now.minusSeconds(24 * 3600), now)
         val today = LocalDate.ofInstant(now, clock.zone)
         val eligible = found.filter { Eligibility.isEligible(it, request.requesterId, donorTypes, today, config) }
         val selected = Eligibility.select(eligible, request.requesterId, donorTypes, today, config)

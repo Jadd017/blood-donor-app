@@ -47,7 +47,9 @@ private object UsersTable : Table("users") {
     val areaId = integer("area_id").nullable()
     val lastDonationDate = date("last_donation_date").nullable()
     val isDonor = bool("is_donor")
+    val createdAt = timestampWithTimeZone("created_at")
     val updatedAt = timestampWithTimeZone("updated_at")
+    val notificationsPausedUntil = timestampWithTimeZone("notifications_paused_until").nullable()
 }
 
 private object HospitalsTable : Table("hospitals") {
@@ -59,7 +61,7 @@ private object HospitalsTable : Table("hospitals") {
 
 private object BloodRequestsTable : Table("blood_requests") {
     val id = long("id").autoIncrement()
-    val requesterId = long("requester_id")
+    val requesterId = long("requester_id").nullable()
     val hospitalId = integer("hospital_id")
     val bloodType = text("blood_type")
     val component = text("component")
@@ -70,6 +72,7 @@ private object BloodRequestsTable : Table("blood_requests") {
     val createdAt = timestampWithTimeZone("created_at")
     val closedAt = timestampWithTimeZone("closed_at").nullable()
     val wavesSent = short("waves_sent")
+    val hidden = bool("hidden")
 }
 
 private object RequestNotificationsTable : Table("request_notifications") {
@@ -145,6 +148,8 @@ class ExposedUserRepository(private val db: Database) : UserRepository {
         areaId = this[UsersTable.areaId],
         lastDonationDate = this[UsersTable.lastDonationDate],
         isDonor = this[UsersTable.isDonor],
+        createdAt = this[UsersTable.createdAt].toInstant(),
+        notificationsPausedUntil = this[UsersTable.notificationsPausedUntil]?.toInstant(),
     )
 
     /** Name of the violated unique constraint, if [e] is a unique violation (SQLSTATE 23505). */
@@ -188,6 +193,10 @@ class ExposedHospitalRepository(private val db: Database) : HospitalRepository {
 class ExposedBloodRequestRepository(private val db: Database) : BloodRequestRepository {
 
     override suspend fun create(requesterId: Long, input: NewBloodRequest, now: Instant): BloodRequest = query(db) {
+        insert(requesterId, input, now)
+    }
+
+    private fun insert(requesterId: Long, input: NewBloodRequest, now: Instant): BloodRequest {
         val id = BloodRequestsTable.insert {
             it[BloodRequestsTable.requesterId] = requesterId
             it[hospitalId] = input.hospitalId
@@ -199,7 +208,62 @@ class ExposedBloodRequestRepository(private val db: Database) : BloodRequestRepo
             it[status] = RequestStatus.OPEN
             it[createdAt] = now.toOffset()
         }[BloodRequestsTable.id]
-        selectById(id)!!
+        return selectById(id)!!
+    }
+
+    override suspend fun createIfAllowed(
+        requesterId: Long,
+        input: NewBloodRequest,
+        now: Instant,
+        limits: PostingLimits,
+    ): CreateRequestResult = jdbc(db) { conn ->
+        // Lock the user's row so two posts by the same user are checked one after the other.
+        conn.prepareStatement("SELECT 1 FROM users WHERE id = ? FOR UPDATE").use { st ->
+            st.setLong(1, requesterId)
+            st.executeQuery().close()
+        }
+        val duplicate = conn.prepareStatement(
+            """
+            SELECT 1 FROM blood_requests
+            WHERE requester_id = ? AND status = 'open' AND needed_by > ?
+              AND hospital_id = ? AND blood_type = ? AND component = ?
+            """.trimIndent()
+        ).use { st ->
+            st.setLong(1, requesterId)
+            st.setObject(2, now.toOffset())
+            st.setInt(3, input.hospitalId)
+            st.setString(4, input.bloodType)
+            st.setString(5, input.component)
+            st.executeQuery().use { it.next() }
+        }
+        if (duplicate) return@jdbc CreateRequestResult.Duplicate
+
+        val open = conn.prepareStatement(
+            "SELECT count(*) FROM blood_requests WHERE requester_id = ? AND status = 'open' AND needed_by > ?"
+        ).use { st ->
+            st.setLong(1, requesterId)
+            st.setObject(2, now.toOffset())
+            st.executeQuery().use { rs -> rs.next(); rs.getInt(1) }
+        }
+        if (open >= limits.maxOpen) return@jdbc CreateRequestResult.TooManyOpen(limits.maxOpen)
+
+        // Every request counts towards the daily limit, whatever happened to it since.
+        val windowStart = now.minus(limits.dailyWindow)
+        val recent = conn.prepareStatement(
+            "SELECT created_at FROM blood_requests WHERE requester_id = ? AND created_at > ? ORDER BY created_at"
+        ).use { st ->
+            st.setLong(1, requesterId)
+            st.setObject(2, windowStart.toOffset())
+            st.executeQuery().use { rs ->
+                buildList { while (rs.next()) add(rs.getObject(1, OffsetDateTime::class.java).toInstant()) }
+            }
+        }
+        if (recent.size >= limits.maxPer24h) {
+            // Posting is possible again once enough of them have left the window.
+            val retryAt = recent[recent.size - limits.maxPer24h].plus(limits.dailyWindow)
+            return@jdbc CreateRequestResult.DailyLimit(retryAt)
+        }
+        CreateRequestResult.Created(insert(requesterId, input, now))
     }
 
     override suspend fun findById(id: Long): BloodRequest? = query(db) { selectById(id) }
@@ -264,7 +328,7 @@ private val requestsWithHospital
 
 private fun ResultRow.toRequest() = BloodRequest(
     id = this[BloodRequestsTable.id],
-    requesterId = this[BloodRequestsTable.requesterId],
+    requesterId = this[BloodRequestsTable.requesterId] ?: DELETED_USER_ID,
     hospitalId = this[BloodRequestsTable.hospitalId],
     hospitalName = this[HospitalsTable.name],
     areaName = this[AreasTable.name],
@@ -277,6 +341,7 @@ private fun ResultRow.toRequest() = BloodRequest(
     createdAt = this[BloodRequestsTable.createdAt].toInstant(),
     closedAt = this[BloodRequestsTable.closedAt]?.toInstant(),
     wavesSent = this[BloodRequestsTable.wavesSent].toInt(),
+    hidden = this[BloodRequestsTable.hidden],
 )
 
 

@@ -5,12 +5,14 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.google.firebase.auth.FirebaseAuth
 import com.jadbarakat.blooddonor.R
+import com.jadbarakat.blooddonor.data.AccountRepository
 import com.jadbarakat.blooddonor.data.ApiException
 import com.jadbarakat.blooddonor.data.BloodRequest
 import com.jadbarakat.blooddonor.data.CreateBloodRequest
 import com.jadbarakat.blooddonor.data.DonorRequest
 import com.jadbarakat.blooddonor.data.ErrorCodes
 import com.jadbarakat.blooddonor.data.Hospital
+import com.jadbarakat.blooddonor.data.MAX_REPORT_DETAILS
 import com.jadbarakat.blooddonor.data.RequestRepository
 import com.jadbarakat.blooddonor.notifications.DeviceTokenManager
 import com.jadbarakat.blooddonor.ui.UiMessage
@@ -57,6 +59,8 @@ data class RequestsUiState(
     val forMe: List<DonorRequest> = emptyList(),
     val isLoadingForMe: Boolean = false,
     val forMeError: UiMessage? = null,
+    /** A one-off note on home, e.g. after blocking a requester. */
+    val homeNotice: UiMessage? = null,
     // Create
     val hospitals: List<Hospital> = emptyList(),
     val isLoadingHospitals: Boolean = false,
@@ -73,11 +77,15 @@ data class RequestsUiState(
     val detail: BloodRequest? = null,
     val isActing: Boolean = false,
     val detailError: UiMessage? = null,
+    val detailInfo: UiMessage? = null,
+    /** Helpers I blocked from this screen (by donor id), so their Block button shows it. */
+    val blockedHelperIds: Set<Long> = emptySet(),
     // Donor detail
     val donorDetail: DonorRequest? = null,
     val isLoadingDonorDetail: Boolean = false,
     val donorDetailError: UiMessage? = null,
-    /** Committing, withdrawing or answering "Did you donate?". */
+    val donorDetailInfo: UiMessage? = null,
+    /** Committing, withdrawing, answering "Did you donate?", reporting or blocking. */
     val isDonorActing: Boolean = false,
 ) {
     fun hospitalById(id: Int?): Hospital? = hospitals.firstOrNull { it.id == id }
@@ -85,6 +93,7 @@ data class RequestsUiState(
 
 class RequestsViewModel(
     private val repository: RequestRepository,
+    private val accounts: AccountRepository,
     private val deviceTokens: DeviceTokenManager,
     private val auth: FirebaseAuth = FirebaseAuth.getInstance(),
 ) : ViewModel() {
@@ -139,6 +148,7 @@ class RequestsViewModel(
                 donorDetail = known,
                 isLoadingDonorDetail = known == null,
                 donorDetailError = null,
+                donorDetailInfo = null,
             )
         }
         donorDetailJob?.cancel()
@@ -191,11 +201,32 @@ class RequestsViewModel(
         refreshForMe()
     }
 
+    /** Reports the open donor view's request; [details] is optional. */
+    fun report(reason: String, details: String) = donorAct("Reporting") { id ->
+        repository.report(id, reason, details.trim().take(MAX_REPORT_DETAILS).ifEmpty { null })
+        _uiState.update { it.copy(donorDetailInfo = UiMessage(R.string.report_sent)) }
+    }
+
+    /** Blocks whoever posted the open donor view's request, then goes home, where it no longer shows. */
+    fun blockRequester() = donorAct("Blocking the requester") { id ->
+        repository.blockRequester(id)
+        _uiState.update { state ->
+            state.copy(
+                screen = RequestsScreen.Home,
+                homeNotice = UiMessage(R.string.block_requester_done),
+                forMe = state.forMe.filterNot { it.id == id && !it.committed },
+            )
+        }
+        refreshForMe()
+    }
+
+    fun dismissHomeNotice() = _uiState.update { it.copy(homeNotice = null) }
+
     private fun donorAct(what: String, call: suspend (Long) -> Unit) {
         val state = _uiState.value
         val id = (state.screen as? RequestsScreen.DonorDetail)?.id ?: return
         if (state.isDonorActing) return
-        _uiState.update { it.copy(isDonorActing = true, donorDetailError = null) }
+        _uiState.update { it.copy(isDonorActing = true, donorDetailError = null, donorDetailInfo = null) }
         viewModelScope.launch {
             try {
                 call(id)
@@ -210,6 +241,7 @@ class RequestsViewModel(
                     ErrorCodes.TOO_EARLY -> UiMessage(R.string.donor_error_too_early)
                     ErrorCodes.REQUEST_NOT_OPEN -> UiMessage(R.string.request_error_not_open)
                     ErrorCodes.NO_PLEDGE, ErrorCodes.PLEDGE_CLOSED -> UiMessage(R.string.donor_error_changed)
+                    ErrorCodes.ALREADY_REPORTED -> UiMessage(R.string.report_error_already)
                     else -> e.toUiMessage()
                 }
                 _uiState.update { it.copy(donorDetailError = message) }
@@ -359,7 +391,7 @@ class RequestsViewModel(
 
     fun openDetail(request: BloodRequest) {
         _uiState.update {
-            it.copy(screen = RequestsScreen.Detail(request.id), detail = request, detailError = null)
+            it.copy(screen = RequestsScreen.Detail(request.id), detail = request, detailError = null, detailInfo = null)
         }
         // The list item is complete; refresh it in case it changed since the list was loaded.
         viewModelScope.launch {
@@ -377,7 +409,7 @@ class RequestsViewModel(
     /** Opens my own request by id, e.g. from a tapped notification. */
     fun openOwnRequest(id: Long) {
         val known = _uiState.value.myRequests.firstOrNull { it.id == id }
-        _uiState.update { it.copy(screen = RequestsScreen.Detail(id), detail = known, detailError = null) }
+        _uiState.update { it.copy(screen = RequestsScreen.Detail(id), detail = known, detailError = null, detailInfo = null) }
         viewModelScope.launch {
             try {
                 val fresh = repository.get(id)
@@ -398,11 +430,33 @@ class RequestsViewModel(
     /** "Donated" or "Didn't come" for one helper ([com.jadbarakat.blooddonor.data.HelperOutcome]). */
     fun confirmHelper(pledgeId: Long, outcome: String) = act { repository.confirmHelper(it, pledgeId, outcome) }
 
+    /** Blocks a helper of my request: they won't be notified about my requests or able to help again. */
+    fun blockHelper(donorId: Long) {
+        val state = _uiState.value
+        if (state.isActing) return
+        _uiState.update { it.copy(isActing = true, detailError = null, detailInfo = null) }
+        viewModelScope.launch {
+            try {
+                accounts.block(donorId)
+                _uiState.update {
+                    it.copy(blockedHelperIds = it.blockedHelperIds + donorId, detailInfo = UiMessage(R.string.block_helper_done))
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.w(TAG, "Blocking helper $donorId failed", e)
+                _uiState.update { it.copy(detailError = e.toUiMessage()) }
+            } finally {
+                _uiState.update { it.copy(isActing = false) }
+            }
+        }
+    }
+
     private fun act(call: suspend (Long) -> BloodRequest) {
         val state = _uiState.value
         val id = state.detail?.id ?: return
         if (state.isActing) return
-        _uiState.update { it.copy(isActing = true, detailError = null) }
+        _uiState.update { it.copy(isActing = true, detailError = null, detailInfo = null) }
         viewModelScope.launch {
             try {
                 val updated = call(id)
@@ -439,7 +493,14 @@ class RequestsViewModel(
         val state = _uiState.value
         if (state.isSubmitting || state.isActing || state.isDonorActing) return
         _uiState.update {
-            it.copy(screen = RequestsScreen.Home, showConfirm = false, detailError = null, donorDetailError = null)
+            it.copy(
+                screen = RequestsScreen.Home,
+                showConfirm = false,
+                detailError = null,
+                detailInfo = null,
+                donorDetailError = null,
+                donorDetailInfo = null,
+            )
         }
     }
 

@@ -84,6 +84,7 @@ class ExposedMatchingRepository(private val db: Database) : MatchingRepository {
         donorTypes: Set<String>,
         radiusMeters: Double?,
         since: Instant,
+        now: Instant,
     ): List<DonorCandidate> = jdbc(db) { conn ->
         // Distance is from the donor's area centroid to the hospital. Donors without an area
         // are only reached by the nationwide wave (radius null).
@@ -102,6 +103,9 @@ class ExposedMatchingRepository(private val db: Database) : MatchingRepository {
               AND EXISTS (SELECT 1 FROM device_tokens t WHERE t.user_id = u.id)
               AND NOT EXISTS (SELECT 1 FROM request_notifications n WHERE n.request_id = ? AND n.user_id = u.id)
               AND (CAST(? AS double precision) IS NULL OR ST_DWithin(a.location, h.location, ?))
+              AND (u.notifications_paused_until IS NULL OR u.notifications_paused_until <= ?)
+              AND NOT EXISTS (SELECT 1 FROM blocks b
+                              WHERE (b.blocker_id = u.id AND b.blocked_id = ?) OR (b.blocker_id = ? AND b.blocked_id = u.id))
             """.trimIndent()
         ).use { st ->
             st.setObject(1, since.toOffset())
@@ -111,6 +115,9 @@ class ExposedMatchingRepository(private val db: Database) : MatchingRepository {
             st.setLong(5, request.id)
             st.setObject(6, radiusMeters, Types.DOUBLE)
             st.setObject(7, radiusMeters, Types.DOUBLE)
+            st.setObject(8, now.toOffset())
+            st.setLong(9, request.requesterId)
+            st.setLong(10, request.requesterId)
             st.executeQuery().use { rs ->
                 buildList {
                     while (rs.next()) {

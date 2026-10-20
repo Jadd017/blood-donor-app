@@ -1,6 +1,8 @@
 # Local testing only. Resets test data in the LOCAL blooddonor database:
-# clears every user's last donation date, cancels open requests, and deletes
-# all request notifications and pledges. Refuses to run against a non-local host.
+# clears every user's last donation date and notification pause, cancels open
+# requests (and un-hides hidden ones), and deletes all request notifications,
+# pledges, reports, strikes and blocks. Refuses to run against a non-local host.
+# Needs the Phase 5 migration (V11): start the server once after pulling it.
 #
 # Usage: powershell -ExecutionPolicy Bypass -File dev\reset-test-data.ps1
 
@@ -51,6 +53,16 @@ WITH changed AS (DELETE FROM request_notifications RETURNING 1)
 SELECT 'Request notifications deleted:          ' || count(*) FROM changed;
 WITH changed AS (DELETE FROM pledges RETURNING 1)
 SELECT 'Pledges deleted:                        ' || count(*) FROM changed;
+WITH changed AS (DELETE FROM reports RETURNING 1)
+SELECT 'Reports deleted:                        ' || count(*) FROM changed;
+WITH changed AS (DELETE FROM strikes RETURNING 1)
+SELECT 'Strikes deleted:                        ' || count(*) FROM changed;
+WITH changed AS (DELETE FROM blocks RETURNING 1)
+SELECT 'Blocks deleted:                         ' || count(*) FROM changed;
+WITH changed AS (UPDATE users SET notifications_paused_until = NULL WHERE notifications_paused_until IS NOT NULL RETURNING 1)
+SELECT 'Notification pauses cleared:            ' || count(*) FROM changed;
+WITH changed AS (UPDATE blood_requests SET hidden = false WHERE hidden RETURNING 1)
+SELECT 'Hidden requests un-hidden:              ' || count(*) FROM changed;
 "@
 
 $sqlFile = [System.IO.Path]::GetTempFileName()

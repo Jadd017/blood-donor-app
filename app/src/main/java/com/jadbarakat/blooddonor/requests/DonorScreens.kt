@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.widget.Toast
+import androidx.annotation.StringRes
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -12,14 +13,18 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -32,12 +37,15 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.jadbarakat.blooddonor.R
 import com.jadbarakat.blooddonor.data.DonorRequest
+import com.jadbarakat.blooddonor.data.MAX_REPORT_DETAILS
 import com.jadbarakat.blooddonor.data.Pledge
 import com.jadbarakat.blooddonor.data.PledgeStatus
+import com.jadbarakat.blooddonor.data.ReportReason
 import com.jadbarakat.blooddonor.data.RequestStatus
 import com.jadbarakat.blooddonor.ui.resolve
 import java.time.Duration
@@ -116,7 +124,7 @@ private fun HelpingBadge() {
     }
 }
 
-private enum class DonorDialog { HELP, WITHDRAW }
+private enum class DonorDialog { HELP, WITHDRAW, REPORT, BLOCK }
 
 /**
  * A request someone else posted, seen by a donor who was notified. Before committing it shows
@@ -128,6 +136,8 @@ fun DonorRequestScreen(
     onHelp: () -> Unit,
     onWithdraw: () -> Unit,
     onDonationAnswer: (donated: Boolean) -> Unit,
+    onReport: (reason: String, details: String) -> Unit,
+    onBlockRequester: () -> Unit,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -183,6 +193,9 @@ fun DonorRequestScreen(
                 uiState.donorDetailError?.let {
                     Text(it.resolve(), color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium)
                 }
+                uiState.donorDetailInfo?.let {
+                    Text(it.resolve(), color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.bodyMedium)
+                }
 
                 when {
                     pledge != null -> Unit
@@ -225,7 +238,34 @@ fun DonorRequestScreen(
                         onConfirm = { dialog = null; onWithdraw() },
                         onDismiss = { dialog = null },
                     )
+                    DonorDialog.REPORT -> ReportDialog(
+                        onSend = { reason, details -> dialog = null; onReport(reason, details) },
+                        onDismiss = { dialog = null },
+                    )
+                    DonorDialog.BLOCK -> ConfirmDialog(
+                        title = stringResource(R.string.block_requester_confirm_title),
+                        message = stringResource(R.string.block_requester_confirm_message),
+                        confirm = stringResource(R.string.block_requester_confirm_button),
+                        dismiss = stringResource(R.string.request_confirm_back),
+                        onConfirm = { dialog = null; onBlockRequester() },
+                        onDismiss = { dialog = null },
+                    )
                     null -> Unit
+                }
+
+                // Safety: report a problem, or never hear from this requester again.
+                HorizontalDivider(Modifier.padding(vertical = 4.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                    TextButton(
+                        onClick = { dialog = DonorDialog.REPORT },
+                        enabled = !uiState.isDonorActing,
+                        modifier = Modifier.weight(1f),
+                    ) { Text(stringResource(R.string.report_button)) }
+                    TextButton(
+                        onClick = { dialog = DonorDialog.BLOCK },
+                        enabled = !uiState.isDonorActing,
+                        modifier = Modifier.weight(1f),
+                    ) { Text(stringResource(R.string.block_requester_button)) }
                 }
             }
 
@@ -301,6 +341,55 @@ private fun PledgeCard(
             }
         }
     }
+}
+
+/** Picks a reason (required) and optional details; "Send report" is the confirmation. */
+@Composable
+private fun ReportDialog(onSend: (reason: String, details: String) -> Unit, onDismiss: () -> Unit) {
+    var reason by rememberSaveable { mutableStateOf<String?>(null) }
+    var details by rememberSaveable { mutableStateOf("") }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.report_title)) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(stringResource(R.string.report_intro), style = MaterialTheme.typography.bodyMedium)
+                ReportReason.ALL.forEach { option ->
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .selectable(selected = reason == option, onClick = { reason = option }, role = Role.RadioButton),
+                    ) {
+                        RadioButton(selected = reason == option, onClick = null)
+                        Text(stringResource(reportReasonLabel(option)), modifier = Modifier.padding(start = 8.dp))
+                    }
+                }
+                OutlinedTextField(
+                    value = details,
+                    onValueChange = { details = it.take(MAX_REPORT_DETAILS) },
+                    label = { Text(stringResource(R.string.report_details_label)) },
+                    supportingText = { Text(stringResource(R.string.request_note_counter, details.length, MAX_REPORT_DETAILS)) },
+                    minLines = 2,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { reason?.let { onSend(it, details) } }, enabled = reason != null) {
+                Text(stringResource(R.string.report_send))
+            }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.request_confirm_back)) } },
+    )
+}
+
+@StringRes
+private fun reportReasonLabel(reason: String): Int = when (reason) {
+    ReportReason.FAKE -> R.string.report_reason_fake
+    ReportReason.MONEY -> R.string.report_reason_money
+    ReportReason.INAPPROPRIATE -> R.string.report_reason_inappropriate
+    else -> R.string.report_reason_other
 }
 
 @Composable

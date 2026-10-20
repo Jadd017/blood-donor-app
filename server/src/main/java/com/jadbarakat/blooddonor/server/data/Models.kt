@@ -17,7 +17,17 @@ data class UserProfile(
     val areaId: Int?,
     val lastDonationDate: LocalDate?,
     val isDonor: Boolean,
+    /** When the profile was created; accounts younger than SafetyConfig.newAccountAge have a lower open-request limit. */
+    val createdAt: Instant = Instant.EPOCH,
+    /** Set after no-shows with several different requesters; no notifications until then. */
+    val notificationsPausedUntil: Instant? = null,
 )
+
+/** Stands in for a user id that became NULL because the account was deleted. Matches no user. */
+const val DELETED_USER_ID = 0L
+
+/** Shown to a requester in place of a helper who deleted their account. */
+const val DELETED_HELPER_NAME = "Deleted account"
 
 /** Validated profile fields from PUT /me (everything except uid and email). */
 data class ProfileInput(
@@ -141,6 +151,7 @@ data class NewBloodRequest(
 
 data class BloodRequest(
     val id: Long,
+    /** [DELETED_USER_ID] once the requester deleted their account. */
     val requesterId: Long,
     val hospitalId: Int,
     val hospitalName: String,
@@ -157,6 +168,8 @@ data class BloodRequest(
     val closedAt: Instant?,
     /** How many notification waves have gone out (0 = none yet). */
     val wavesSent: Int = 0,
+    /** Hidden after too many reports (and closed as cancelled at the same time). */
+    val hidden: Boolean = false,
 ) {
     fun isOverdue(now: Instant): Boolean = !now.isBefore(neededBy)
 
@@ -165,3 +178,47 @@ data class BloodRequest(
         if (status == RequestStatus.OPEN && isOverdue(now)) copy(status = RequestStatus.EXPIRED, closedAt = neededBy)
         else this
 }
+
+/** The outcome of POST /requests once the posting rules ran. */
+sealed interface CreateRequestResult {
+    data class Created(val request: BloodRequest) : CreateRequestResult
+    /** The user already has an open request for the same hospital, blood type and component. */
+    data object Duplicate : CreateRequestResult
+    data class TooManyOpen(val limit: Int) : CreateRequestResult
+    /** The rolling 24 h limit was reached; posting is possible again at [retryAt]. */
+    data class DailyLimit(val retryAt: Instant) : CreateRequestResult
+}
+
+/** The posting limits that apply to one user right now. */
+data class PostingLimits(val maxOpen: Int, val maxPer24h: Int, val dailyWindow: Duration)
+
+object ReportReason {
+    val ALL = setOf("fake", "money", "inappropriate", "other")
+}
+
+sealed interface ReportResult {
+    /** [hidden] is true if this report hid the request (and gave its requester a strike). */
+    data class Reported(val hidden: Boolean) : ReportResult
+    data object AlreadyReported : ReportResult
+}
+
+/**
+ * Someone the user blocked. [fullName] is set only for people whose identity the user already saw
+ * (helpers on their requests); a requester blocked from a donor view is described by
+ * [requestHospitalName] and [requestCreatedAt] instead.
+ */
+data class BlockEntry(
+    val blockedId: Long,
+    val fullName: String?,
+    val requestHospitalName: String?,
+    val requestCreatedAt: Instant?,
+    val createdAt: Instant,
+)
+
+/** What deleting an account changed, so the right people can be told. */
+data class AccountDeletion(
+    /** The user's requests that were open and are now cancelled. */
+    val cancelledRequestIds: List<Long>,
+    /** Other people's requests the user had committed to and is now withdrawn from. */
+    val withdrawnRequestIds: List<Long>,
+)

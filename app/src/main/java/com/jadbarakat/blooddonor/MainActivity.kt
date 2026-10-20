@@ -18,6 +18,7 @@ import com.jadbarakat.blooddonor.notifications.BloodDonorMessagingService
 import com.jadbarakat.blooddonor.profile.ProfileRoot
 import com.jadbarakat.blooddonor.profile.ProfileViewModel
 import com.jadbarakat.blooddonor.requests.RequestsViewModel
+import com.jadbarakat.blooddonor.settings.SettingsViewModel
 import com.jadbarakat.blooddonor.ui.theme.BloodDonorTheme
 
 class MainActivity : ComponentActivity() {
@@ -31,8 +32,11 @@ class MainActivity : ComponentActivity() {
         val authViewModelFactory = viewModelFactory {
             initializer { AuthViewModel(container.auth, container.deviceTokens) }
         }
+        val settingsViewModelFactory = viewModelFactory {
+            initializer { SettingsViewModel(container.profileRepository, container.accountRepository) }
+        }
         val requestsViewModelFactory = viewModelFactory {
-            initializer { RequestsViewModel(container.requestRepository, container.deviceTokens, container.auth) }
+            initializer { RequestsViewModel(container.requestRepository, container.accountRepository, container.deviceTokens, container.auth) }
         }
         enableEdgeToEdge()
         setContent {
@@ -45,6 +49,7 @@ class MainActivity : ComponentActivity() {
                         ProfileRoot(
                             viewModel = viewModel<ProfileViewModel>(factory = profileViewModelFactory),
                             requestsViewModel = viewModel<RequestsViewModel>(factory = requestsViewModelFactory),
+                            settingsViewModel = viewModel<SettingsViewModel>(factory = settingsViewModelFactory),
                             notificationSettings = container.notificationSettings,
                             pendingRequest = container.pendingRequest,
                             onSignOut = onSignOut,

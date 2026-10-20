@@ -140,4 +140,20 @@ class RequestNotifierTest {
         notifier.handle(RequestEvent.RequestClosed(request.id))
         assertTrue(push.sent.isEmpty())
     }
+
+    @Test
+    fun `when a request is hidden, committed donors hear it closed and the requester why`() = runBlocking {
+        pledges.commit(request.id, bob, clock.instant(), 2)
+        requests.rows[request.id] = requests.rows.getValue(request.id).copy(hidden = true, status = RequestStatus.CANCELLED, closedAt = clock.instant())
+
+        notifier.handle(RequestEvent.RequestHidden(request.id))
+        assertEquals(2, push.sent.size)
+        assertEquals(listOf("t-bob"), sentTo(0))
+        assertEquals("request_closed", message(0).data["type"])
+        assertEquals(listOf("t-alice"), sentTo(1))
+        assertEquals("Your request was hidden", message(1).title)
+        assertEquals("request_hidden", message(1).data["type"])
+        assertNoPrivateData(message(0))
+        assertNoPrivateData(message(1))
+    }
 }

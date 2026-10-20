@@ -10,8 +10,9 @@ import java.time.Clock
 import java.time.Duration
 
 /**
- * Status notifications about a request: to the requester when a donor commits or withdraws, or
- * when a helper's arrival window ends unconfirmed, and to committed donors when it closes.
+ * Status notifications about a request: to the requester when a donor commits or withdraws, when
+ * a helper's arrival window ends unconfirmed, or when the request was hidden after reports, and to
+ * committed donors when it closes.
  * Payloads never contain the note or any phone number.
  */
 class RequestNotifier(
@@ -31,6 +32,10 @@ class RequestNotifier(
             is RequestEvent.RequestClosed -> {
                 if (request.status == RequestStatus.OPEN) return
                 send(pledges.committedDonorIds(request.id), requestClosed(request))
+            }
+            is RequestEvent.RequestHidden -> {
+                send(pledges.committedDonorIds(request.id), requestClosed(request))
+                send(listOf(request.requesterId), requestHidden(request))
             }
         }
     }
@@ -78,6 +83,12 @@ class RequestNotifier(
         request, "confirm_helper", VIEW_REQUESTER,
         title = "Did ${donorFullName.trim().split(Regex("\\s+")).first()} donate?",
         body = "Confirm in the app.",
+    )
+
+    fun requestHidden(request: BloodRequest) = update(
+        request, "request_hidden", VIEW_REQUESTER,
+        title = "Your request was hidden",
+        body = "Your request at ${request.hospitalName} was reported by several people and is closed.",
     )
 
     fun requestClosed(request: BloodRequest) =

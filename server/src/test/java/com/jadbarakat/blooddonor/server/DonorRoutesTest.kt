@@ -60,19 +60,19 @@ class DonorRoutesTest {
 
     private fun test(block: suspend ApplicationTestBuilder.() -> Unit) = testApplication {
         application {
-            module(verifier, users, areas, hospitals, requests, deviceTokens, InMemoryPledgeRepository(users, requests), onRequestCreated = { created += it }, clock = clock)
+            module(verifier, users, areas, hospitals, requests, deviceTokens, InMemoryPledgeRepository(users, requests), InMemorySafetyRepository(users, requests), FakeAccountDeleter(), onRequestCreated = { created += it }, safetyConfig = RELAXED_POSTING, clock = clock)
         }
         block()
     }
 
     private fun json(text: String): JsonObject = Json.parseToJsonElement(text).jsonObject
 
-    private suspend fun ApplicationTestBuilder.createRequest(note: String? = "ICU, 3rd floor"): Long {
+    private suspend fun ApplicationTestBuilder.createRequest(note: String? = "ICU, 3rd floor", bloodType: String = "O-"): Long {
         val noteJson = note?.let { ""","note":"$it"""" }.orEmpty()
         val response = client.post("/api/v1/requests") {
             bearerAuth("alice-token")
             contentType(ContentType.Application.Json)
-            setBody("""{"hospitalId":10,"bloodType":"O-","component":"red_cells","unitsNeeded":2,"neededInHours":6$noteJson}""")
+            setBody("""{"hospitalId":10,"bloodType":"$bloodType","component":"red_cells","unitsNeeded":2,"neededInHours":6$noteJson}""")
         }
         assertEquals(HttpStatusCode.Created, response.status)
         return json(response.bodyAsText())["id"]!!.jsonPrimitive.content.toLong()
@@ -190,10 +190,10 @@ class DonorRoutesTest {
     fun `for-me lists open requests I was notified about, newest first`() = test {
         val first = createRequest()
         clock.now = clock.now.plus(Duration.ofMinutes(5))
-        val second = createRequest(note = null)
+        val second = createRequest(note = null, bloodType = "A-")
         clock.now = clock.now.plus(Duration.ofMinutes(5))
-        val cancelled = createRequest()
-        val notMine = createRequest()
+        val cancelled = createRequest(bloodType = "B-")
+        val notMine = createRequest(bloodType = "AB-")
         listOf(first, second, cancelled).forEach { notify(it, bobId) }
         client.post("/api/v1/requests/$cancelled/cancel") { bearerAuth("alice-token") }
 

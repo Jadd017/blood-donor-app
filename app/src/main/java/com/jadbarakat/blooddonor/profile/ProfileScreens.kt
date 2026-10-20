@@ -18,6 +18,8 @@ import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DatePicker
 import androidx.compose.material3.DatePickerDialog
@@ -73,6 +75,9 @@ import com.jadbarakat.blooddonor.requests.RequestDetailScreen
 import com.jadbarakat.blooddonor.requests.RequestsScreen
 import com.jadbarakat.blooddonor.requests.RequestsUiState
 import com.jadbarakat.blooddonor.requests.RequestsViewModel
+import com.jadbarakat.blooddonor.settings.SettingsScreen
+import com.jadbarakat.blooddonor.settings.SettingsViewModel
+import com.jadbarakat.blooddonor.ui.formatWhen
 import com.jadbarakat.blooddonor.ui.resolve
 import com.jadbarakat.blooddonor.ui.theme.BloodDonorTheme
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -87,6 +92,7 @@ import java.time.format.FormatStyle
 fun ProfileRoot(
     viewModel: ProfileViewModel,
     requestsViewModel: RequestsViewModel,
+    settingsViewModel: SettingsViewModel,
     notificationSettings: NotificationSettings,
     pendingRequest: MutableStateFlow<PendingRequest?>,
     onSignOut: () -> Unit,
@@ -129,6 +135,8 @@ fun ProfileRoot(
                         onRetryRequests = requestsViewModel::refreshList,
                         onRetryForMe = requestsViewModel::refreshForMe,
                         onEditProfile = viewModel::editProfile,
+                        onOpenSettings = viewModel::openSettings,
+                        onDismissNotice = requestsViewModel::dismissHomeNotice,
                         onSignOut = onSignOut,
                         modifier = modifier,
                     )
@@ -154,6 +162,8 @@ fun ProfileRoot(
                         onHelp = requestsViewModel::help,
                         onWithdraw = requestsViewModel::withdrawHelp,
                         onDonationAnswer = requestsViewModel::confirmDonation,
+                        onReport = requestsViewModel::report,
+                        onBlockRequester = requestsViewModel::blockRequester,
                         onBack = requestsViewModel::backToHome,
                         modifier = modifier,
                     )
@@ -165,11 +175,28 @@ fun ProfileRoot(
                         onFulfill = requestsViewModel::fulfill,
                         onCancel = requestsViewModel::cancel,
                         onConfirmHelper = requestsViewModel::confirmHelper,
+                        onBlockHelper = requestsViewModel::blockHelper,
                         onBack = requestsViewModel::backToHome,
                         modifier = modifier,
                     )
                 }
             }
+        }
+        is ProfileScreen.Settings -> {
+            val settingsState by settingsViewModel.uiState.collectAsStateWithLifecycle()
+            LaunchedEffect(Unit) { settingsViewModel.load() }
+            val close = { viewModel.closeSettings(settingsState.profile) }
+            BackHandler(enabled = !settingsState.isDeleting) { close() }
+            SettingsScreen(
+                uiState = settingsState,
+                onRetry = settingsViewModel::load,
+                onUnblock = settingsViewModel::unblock,
+                onDeleteAccount = settingsViewModel::deleteAccount,
+                // The account is gone: sign out and return to the start.
+                onAccountDeleted = onSignOut,
+                onBack = close,
+                modifier = modifier,
+            )
         }
         is ProfileScreen.Form -> {
             BackHandler(enabled = !screen.isNew) { viewModel.cancelEdit() }
@@ -219,6 +246,8 @@ fun HomeScreen(
     onRetryRequests: () -> Unit,
     onRetryForMe: () -> Unit,
     onEditProfile: () -> Unit,
+    onOpenSettings: () -> Unit,
+    onDismissNotice: () -> Unit,
     onSignOut: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -228,6 +257,15 @@ fun HomeScreen(
             style = MaterialTheme.typography.headlineMedium,
             textAlign = TextAlign.Center,
         )
+        requests.homeNotice?.let { notice ->
+            Card(Modifier.fillMaxWidth()) {
+                Row(Modifier.padding(start = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text(notice.resolve(), style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+                    TextButton(onClick = onDismissNotice) { Text(stringResource(R.string.button_ok)) }
+                }
+            }
+        }
+        NotificationsPausedHint(profile)
         if (profile.isDonor && notificationSettings != null) {
             NotificationsOffHint(notificationSettings)
         }
@@ -270,8 +308,31 @@ fun HomeScreen(
         Button(onClick = onEditProfile, modifier = Modifier.fillMaxWidth()) {
             Text(stringResource(R.string.home_button_edit_profile))
         }
+        OutlinedButton(onClick = onOpenSettings, modifier = Modifier.fillMaxWidth()) {
+            Text(stringResource(R.string.home_button_settings))
+        }
         OutlinedButton(onClick = onSignOut, modifier = Modifier.fillMaxWidth()) {
             Text(stringResource(R.string.signed_in_button_sign_out))
+        }
+    }
+}
+
+/** Why this donor gets no alerts for now, and until when (no-shows with several requesters). */
+@Composable
+private fun NotificationsPausedHint(profile: Profile) {
+    val until = profile.notificationsPausedUntil
+        ?.takeIf { runCatching { Instant.parse(it).isAfter(Instant.now()) }.getOrDefault(false) }
+        ?: return
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text(
+                stringResource(R.string.settings_notifications_paused, formatWhen(until) ?: until),
+                style = MaterialTheme.typography.titleSmall,
+            )
+            Text(stringResource(R.string.settings_notifications_paused_no_shows), style = MaterialTheme.typography.bodyMedium)
         }
     }
 }
@@ -667,6 +728,8 @@ private fun HomePreview() {
             onRetryRequests = {},
             onRetryForMe = {},
             onEditProfile = {},
+            onOpenSettings = {},
+            onDismissNotice = {},
             onSignOut = {},
         )
     }

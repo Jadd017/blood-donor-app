@@ -7,6 +7,7 @@ import com.jadbarakat.blooddonor.server.FakePushSender
 import com.jadbarakat.blooddonor.server.InMemoryBloodRequestRepository
 import com.jadbarakat.blooddonor.server.InMemoryDeviceTokenRepository
 import com.jadbarakat.blooddonor.server.InMemoryPledgeRepository
+import com.jadbarakat.blooddonor.server.InMemorySafetyRepository
 import com.jadbarakat.blooddonor.server.InMemoryUserRepository
 import com.jadbarakat.blooddonor.server.MutableClock
 import com.jadbarakat.blooddonor.server.SentNotification
@@ -369,5 +370,37 @@ class WaveServiceTest {
         assertFalse("70123456" in everything)
         assertFalse("Jad" in everything)
         assertEquals(request.neededBy, message.expiresAt)
+    }
+
+    @Test
+    fun `donors whose notifications are paused are skipped until the pause ends`() = runBlocking {
+        matching.donors += FakeDonor(2, "O-", 3.0, notificationsPausedUntil = start.plus(Duration.ofDays(30)))
+        tokens.tokens["t2"] = 2
+        donor(3, km = 4.0)
+        val request = createRequest()
+        service().runDueWaveFor(request.id)
+        assertEquals(setOf(3L), notified(request.id))
+
+        clock.now = start.plus(Duration.ofDays(30))
+        val later = createRequest(bloodType = "O-", hours = 24)
+        service().runDueWaveFor(later.id)
+        assertEquals(setOf(2L, 3L), notified(later.id))
+    }
+
+    @Test
+    fun `blocks keep donor and requester apart in both directions`() = runBlocking {
+        val users = InMemoryUserRepository()
+        val safety = InMemorySafetyRepository(users, requests)
+        val blockingMatching = FakeMatchingRepository(requests, tokens, safety)
+        val waves = WaveService(requests, blockingMatching, tokens, push, { _, _ -> 0 }, MatchingConfig(), clock)
+        listOf(2L, 3L, 4L).forEach { id ->
+            blockingMatching.donors += FakeDonor(id, "O-", 2.0)
+            tokens.tokens["t$id"] = id
+        }
+        safety.block(blockerId = 2, blockedId = requesterId, viaRequestId = null, clock.instant()) // donor blocked the requester
+        safety.block(blockerId = requesterId, blockedId = 3, viaRequestId = null, clock.instant()) // requester blocked the donor
+        val request = createRequest()
+        waves.runDueWaveFor(request.id)
+        assertEquals(setOf(4L), notified(request.id))
     }
 }

@@ -61,11 +61,14 @@ Only those donors get a push notification. If not enough people respond, the sea
   `15 km → 30 km (after 30 min) → 60 km (after 1 h) → all of Lebanon (after 2 h)`
 - Up to 50 closest donors per wave, each donor notified only once per request, and at most 3 alerts per donor per day
 - Donation-gap eligibility (configurable)
+- **Automatic anti-spam:** at most 2 open requests at a time (1 for accounts younger than 7 days), 3 per 24 hours, no duplicate requests, and per-user rate limits
+- **Reporting:** a request reported by 3 different people is hidden and closed, and the requester gets a strike (posting suspended 7 days, then 30 days, then permanently)
+- **No-show pause:** a donor marked as a no-show by 3 different requesters within 90 days gets no alerts for 30 days
+- **Blocking** in both directions, without revealing who posted a request
+- **In-app account deletion** (open requests cancelled, past requests and donations kept without the person)
 
 ### 🛠️ Planned
 - **"I can help":** a donor commits to help, and only then do donor and requester see each other's contact details
-- **Anti-spam:** daily request limits, a waiting period for new accounts, reporting with automatic hiding, and blocking
-- In-app account deletion
 - Deployment on a Google Cloud e2-micro VM, and release on Google Play
 - Arabic language, donation history, "eligible again" reminders and thank-you badges
 
@@ -75,7 +78,7 @@ Only those donors get a push notification. If not enough people respond, the sea
 
 PowerShell helpers in `dev/` for local testing only; they're never used in production.
 
-- **`dev/reset-test-data.ps1`** clears every user's last donation date, cancels all open requests, and deletes all request notifications and pledges in the local database, so the same accounts can be matched again. It reads connection settings from `server/.env`, refuses to run unless the database host is localhost, and prints what it changed.
+- **`dev/reset-test-data.ps1`** clears every user's last donation date and notification pause, cancels all open requests, and deletes all request notifications, pledges, reports, strikes and blocks in the local database, so the same accounts can be matched again. It reads connection settings from `server/.env`, refuses to run unless the database host is localhost, and prints what it changed.
 - **`dev/dev-run.ps1`** points `JAVA_HOME` at Android Studio's JBR, restarts adb, installs the debug app on every connected device, sets up `adb reverse tcp:8080 tcp:8080` on each one, and launches the app. It warns if the server isn't answering on `http://localhost:8080/health`.
 
 ```powershell

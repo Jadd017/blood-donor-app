@@ -1,10 +1,13 @@
 package com.jadbarakat.blooddonor.server.api
 
 import com.jadbarakat.blooddonor.server.data.Area
+import com.jadbarakat.blooddonor.server.data.BlockEntry
 import com.jadbarakat.blooddonor.server.data.BloodRequest
+import com.jadbarakat.blooddonor.server.data.DELETED_USER_ID
 import com.jadbarakat.blooddonor.server.data.Helper
 import com.jadbarakat.blooddonor.server.data.Hospital
 import com.jadbarakat.blooddonor.server.data.UserProfile
+import com.jadbarakat.blooddonor.server.safety.Suspension
 import kotlinx.serialization.Serializable
 import java.time.Instant
 
@@ -33,7 +36,18 @@ data class ProfileResponse(
     val areaId: Int? = null,
     val lastDonationDate: String? = null,
     val isDonor: Boolean,
+    /** Set while posting is suspended because of strikes (ISO instant); see [postingSuspendedPermanent]. */
+    val postingSuspendedUntil: String? = null,
+    val postingSuspendedPermanent: Boolean = false,
+    /** Set while notifications are paused (ISO instant), with the reason (one of [PauseReason]). */
+    val notificationsPausedUntil: String? = null,
+    val notificationsPausedReason: String? = null,
 )
+
+object PauseReason {
+    /** No-shows confirmed by several different requesters. */
+    const val NO_SHOWS = "no_shows"
+}
 
 /** Deliberately small (no coordinates): the app downloads the whole list. */
 @Serializable
@@ -63,6 +77,8 @@ data class BloodRequestResponse(
     val status: String,
     val createdAt: String,
     val closedAt: String? = null,
+    /** True if the request was hidden after reports from several users. */
+    val hidden: Boolean = false,
     /** Only in the owner's view: donors who committed and didn't withdraw, with their phones. */
     val helpers: List<HelperResponse>? = null,
     /** Only with [helpers]: how many donors count as helping right now ([confirmedDonatedCount] + [onTheWayCount]). */
@@ -77,6 +93,8 @@ data class BloodRequestResponse(
 @Serializable
 data class HelperResponse(
     val pledgeId: Long,
+    /** For POST /blocks/{userId}. Absent when the donor deleted their account. */
+    val donorId: Long? = null,
     val fullName: String,
     val bloodType: String? = null,
     val phone: String,
@@ -145,18 +163,43 @@ data class PledgeResponse(
 @Serializable
 data class DonationBody(val donated: Boolean)
 
+/** Body of POST /requests/{id}/report. [reason] is fake, money, inappropriate or other. */
+@Serializable
+data class ReportBody(val reason: String, val details: String? = null)
+
+/**
+ * Someone I blocked. [fullName] only for people I already knew (helpers on my requests); a
+ * requester blocked from a donor view is shown by [requestHospitalName] and [requestCreatedAt].
+ */
+@Serializable
+data class BlockResponse(
+    val userId: Long,
+    val fullName: String? = null,
+    val requestHospitalName: String? = null,
+    val requestCreatedAt: String? = null,
+    val createdAt: String,
+)
+
 fun Area.toResponse() = AreaResponse(id, name, district, governorate)
 
-fun UserProfile.toResponse() = ProfileResponse(
-    email = email,
-    fullName = fullName,
-    phone = phone,
-    bloodType = bloodType,
-    sex = sex,
-    areaId = areaId,
-    lastDonationDate = lastDonationDate?.toString(),
-    isDonor = isDonor,
-)
+/** [suspension] is the current posting suspension; a notification pause is only shown while it lasts at [now]. */
+fun UserProfile.toResponse(suspension: Suspension?, now: Instant): ProfileResponse {
+    val pausedUntil = notificationsPausedUntil?.takeIf { it.isAfter(now) }
+    return ProfileResponse(
+        email = email,
+        fullName = fullName,
+        phone = phone,
+        bloodType = bloodType,
+        sex = sex,
+        areaId = areaId,
+        lastDonationDate = lastDonationDate?.toString(),
+        isDonor = isDonor,
+        postingSuspendedUntil = suspension?.until?.toString(),
+        postingSuspendedPermanent = suspension?.permanent == true,
+        notificationsPausedUntil = pausedUntil?.toString(),
+        notificationsPausedReason = pausedUntil?.let { PauseReason.NO_SHOWS },
+    )
+}
 
 fun Hospital.toResponse() = HospitalResponse(id, name, areaId)
 
@@ -172,10 +215,28 @@ fun BloodRequest.toResponse() = BloodRequestResponse(
     status = status,
     createdAt = createdAt.toString(),
     closedAt = closedAt?.toString(),
+    hidden = hidden,
 )
 
-fun Helper.toResponse(arrivalEndsAt: Instant, state: String) =
-    HelperResponse(pledgeId, fullName, bloodType, phone, status, committedAt.toString(), arrivalEndsAt.toString(), state)
+fun Helper.toResponse(arrivalEndsAt: Instant, state: String) = HelperResponse(
+    pledgeId = pledgeId,
+    donorId = donorId.takeIf { it != DELETED_USER_ID },
+    fullName = fullName,
+    bloodType = bloodType,
+    phone = phone,
+    status = status,
+    committedAt = committedAt.toString(),
+    arrivalEndsAt = arrivalEndsAt.toString(),
+    state = state,
+)
+
+fun BlockEntry.toResponse() = BlockResponse(
+    userId = blockedId,
+    fullName = fullName,
+    requestHospitalName = requestHospitalName,
+    requestCreatedAt = requestCreatedAt?.toString(),
+    createdAt = createdAt.toString(),
+)
 
 fun BloodRequest.toDonorResponse(committed: Boolean? = null, myPledge: PledgeResponse? = null) = DonorRequestResponse(
     id = id,

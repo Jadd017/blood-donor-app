@@ -72,7 +72,7 @@ class ExposedPledgeRepository(private val db: Database) : PledgeRepository {
         conn.prepareStatement(
             """
             SELECT p.id, p.donor_id, u.full_name, u.blood_type, u.phone, p.status, p.committed_at, p.requester_outcome
-            FROM pledges p JOIN users u ON u.id = p.donor_id
+            FROM pledges p LEFT JOIN users u ON u.id = p.donor_id
             WHERE p.request_id = ? AND p.status <> 'withdrawn'
             ORDER BY p.committed_at, p.id
             """.trimIndent()
@@ -85,9 +85,10 @@ class ExposedPledgeRepository(private val db: Database) : PledgeRepository {
                             Helper(
                                 pledgeId = rs.getLong("id"),
                                 donorId = rs.getLong("donor_id"),
-                                fullName = rs.getString("full_name"),
+                                // A helper who deleted their account keeps their place, without name or phone.
+                                fullName = rs.getString("full_name") ?: DELETED_HELPER_NAME,
                                 bloodType = rs.getString("blood_type"),
-                                phone = rs.getString("phone"),
+                                phone = rs.getString("phone").orEmpty(),
                                 status = rs.getString("status"),
                                 committedAt = rs.getObject("committed_at", OffsetDateTime::class.java).toInstant(),
                                 requesterOutcome = rs.getString("requester_outcome"),
@@ -206,7 +207,7 @@ class ExposedPledgeRepository(private val db: Database) : PledgeRepository {
             FROM blood_requests r, users u
             WHERE r.id = p.request_id AND u.id = p.donor_id
               AND p.reminder_sent_at IS NULL AND p.requester_outcome IS NULL
-              AND p.status IN ('committed', 'donated') AND r.status <> 'cancelled'
+              AND p.status IN ('committed', 'donated') AND r.status <> 'cancelled' AND r.requester_id IS NOT NULL
               AND LEAST(p.committed_at + make_interval(secs => CAST(? AS double precision)), r.needed_by) <= ?
             RETURNING p.id, p.request_id, r.requester_id, u.full_name
             """.trimIndent()
@@ -253,7 +254,7 @@ class ExposedPledgeRepository(private val db: Database) : PledgeRepository {
     private fun ResultSet.toPledge() = Pledge(
         id = getLong("id"),
         requestId = getLong("request_id"),
-        donorId = getLong("donor_id"),
+        donorId = getLong("donor_id"), // NULL (deleted account) reads as 0, i.e. DELETED_USER_ID
         status = getString("status"),
         committedAt = getObject("committed_at", OffsetDateTime::class.java).toInstant(),
         requesterOutcome = getString("requester_outcome"),

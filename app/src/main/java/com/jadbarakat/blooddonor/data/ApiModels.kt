@@ -18,7 +18,18 @@ data class Profile(
     val areaId: Int? = null,
     val lastDonationDate: String? = null, // ISO date, e.g. 2026-03-01
     val isDonor: Boolean,
+    /** Set while posting is suspended because of reported requests (ISO instant). */
+    val postingSuspendedUntil: String? = null,
+    val postingSuspendedPermanent: Boolean = false,
+    /** Set while notifications are paused (ISO instant), with the reason ([PauseReason]). */
+    val notificationsPausedUntil: String? = null,
+    val notificationsPausedReason: String? = null,
 )
+
+object PauseReason {
+    /** No-shows confirmed by several different requesters. */
+    const val NO_SHOWS = "no_shows"
+}
 
 /** Body of PUT /api/v1/me. */
 @Serializable
@@ -61,6 +72,8 @@ data class BloodRequest(
     val status: String,
     val createdAt: String,
     val closedAt: String? = null,
+    /** True if the request was hidden (and closed) after reports from several people. */
+    val hidden: Boolean = false,
     /** Only in GET /requests/{id}: donors who committed and didn't withdraw, with their phone numbers. */
     val helpers: List<Helper> = emptyList(),
     /** Only in GET /requests/{id}: how many donors count as helping (confirmed donated + on the way). */
@@ -75,6 +88,8 @@ data class BloodRequest(
 @Serializable
 data class Helper(
     val pledgeId: Long,
+    /** For blocking; absent if the donor deleted their account. */
+    val donorId: Long? = null,
     val fullName: String,
     val bloodType: String? = null,
     val phone: String,
@@ -143,13 +158,41 @@ data class Pledge(
 @Serializable
 data class DonationBody(val donated: Boolean)
 
+/** Body of POST /api/v1/requests/{id}/report. [reason] is one of [ReportReason]. */
+@Serializable
+data class ReportBody(val reason: String, val details: String?)
+
+object ReportReason {
+    const val FAKE = "fake"
+    const val MONEY = "money"
+    const val INAPPROPRIATE = "inappropriate"
+    const val OTHER = "other"
+    val ALL = listOf(FAKE, MONEY, INAPPROPRIATE, OTHER)
+}
+
+/** Max length of the optional report details; the server enforces the same. */
+const val MAX_REPORT_DETAILS = 200
+
+/**
+ * Someone I blocked (GET /api/v1/blocks). [fullName] only for helpers on my requests; a requester
+ * I blocked from a request I was notified about is shown by hospital and date instead.
+ */
+@Serializable
+data class BlockedUser(
+    val userId: Long,
+    val fullName: String? = null,
+    val requestHospitalName: String? = null,
+    val requestCreatedAt: String? = null,
+    val createdAt: String,
+)
+
 /** Body of PUT and DELETE /api/v1/me/device-token. */
 @Serializable
 data class DeviceTokenBody(val token: String)
 
-/** Error body sent by the server: {"error": "<code>", "message": "<text>"}. */
+/** Error body sent by the server: {"error": "<code>", "message": "<text>", "details": {...}}. */
 @Serializable
-internal data class ErrorBody(val error: String, val message: String = "")
+internal data class ErrorBody(val error: String, val message: String = "", val details: Map<String, String> = emptyMap())
 
 object ErrorCodes {
     const val PROFILE_NOT_FOUND = "profile_not_found"
@@ -174,6 +217,15 @@ object ErrorCodes {
     const val HELPER_NOT_FOUND = "helper_not_found"
     const val HELPER_WITHDREW = "helper_withdrew"
     const val HELPER_ALREADY_CONFIRMED = "helper_already_confirmed"
+    // Phase 5: anti-spam and safety
+    const val TOO_MANY_OPEN_REQUESTS = "too_many_open_requests"
+    const val DAILY_LIMIT = "daily_limit"
+    const val DUPLICATE_REQUEST = "duplicate_request"
+    const val POSTING_SUSPENDED = "posting_suspended"
+    const val RATE_LIMITED = "rate_limited"
+    const val ALREADY_REPORTED = "already_reported"
+    const val BLOCKED = "blocked"
+    const val USER_NOT_FOUND = "user_not_found"
 }
 
 object PledgeStatus {

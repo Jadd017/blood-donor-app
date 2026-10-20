@@ -63,7 +63,7 @@ class RequestRoutesTest {
     private fun profile(phone: String) = ProfileInput("Someone", phone, "O+", "female", 1, null, true)
 
     private fun test(block: suspend ApplicationTestBuilder.() -> Unit) = testApplication {
-        application { module(verifier, users, areas, hospitals, requests, InMemoryDeviceTokenRepository(), InMemoryPledgeRepository(users, requests), clock = clock) }
+        application { module(verifier, users, areas, hospitals, requests, InMemoryDeviceTokenRepository(), InMemoryPledgeRepository(users, requests), InMemorySafetyRepository(users, requests), FakeAccountDeleter(), safetyConfig = RELAXED_POSTING, clock = clock) }
         block()
     }
 
@@ -172,7 +172,7 @@ class RequestRoutesTest {
     fun `deadline is computed by the server within 6 to 72 hours`() = test {
         val six = json(create(json = body(hours = 6)).bodyAsText())
         assertEquals("2026-06-15T15:00:00Z", six.str("neededBy"))
-        val max = json(create(json = body(hours = 72)).bodyAsText())
+        val max = json(create(json = body(hours = 72, bloodType = "B+")).bodyAsText())
         assertEquals("2026-06-18T09:00:00Z", max.str("neededBy"))
         assertError(create(json = body(hours = 5)), HttpStatusCode.BadRequest, "invalid_needed_by")
         assertError(create(json = body(hours = 73)), HttpStatusCode.BadRequest, "invalid_needed_by")
@@ -199,7 +199,7 @@ class RequestRoutesTest {
         assertError(create(json = body(units = 0)), HttpStatusCode.BadRequest, "invalid_units")
         assertError(create(json = body(units = 11)), HttpStatusCode.BadRequest, "invalid_units")
         assertEquals(HttpStatusCode.Created, create(json = body(units = 1)).status)
-        assertEquals(HttpStatusCode.Created, create(json = body(units = 10)).status)
+        assertEquals(HttpStatusCode.Created, create(json = body(units = 10, bloodType = "B+")).status)
     }
 
     @Test
@@ -319,8 +319,8 @@ class RequestRoutesTest {
     @Test
     fun `expiry job stores expired status only for overdue open requests`() = test {
         val short = createId(json = body(hours = 6))
-        val long = createId(json = body(hours = 24))
-        val cancelled = createId(json = body(hours = 6))
+        val long = createId(json = body(hours = 24, bloodType = "B+"))
+        val cancelled = createId(json = body(hours = 6, bloodType = "O+"))
         action(cancelled, "cancel")
 
         clock.now = clock.now.plus(Duration.ofHours(8))

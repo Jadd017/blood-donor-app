@@ -23,8 +23,14 @@ import java.util.concurrent.TimeUnit
 
 /** Everything that can go wrong when talking to our server. */
 sealed class ApiException(message: String, cause: Throwable? = null) : Exception(message, cause) {
-    /** The server answered with an error body: {"error": code, "message": text}. */
-    class Http(val status: Int, val code: String, message: String) : ApiException("$status $code: $message")
+    /** The server answered with an error body: {"error": code, "message": text, "details": {...}}. */
+    class Http(
+        val status: Int,
+        val code: String,
+        message: String,
+        /** Extra values for the app's own message, e.g. "until" for posting_suspended. */
+        val details: Map<String, String> = emptyMap(),
+    ) : ApiException("$status $code: $message")
 
     /** The server could not be reached (offline, server down, adb reverse missing, timeout). */
     class Unreachable(cause: Throwable) : ApiException("Server unreachable", cause)
@@ -106,7 +112,7 @@ class ApiClient(
         } catch (e: IllegalArgumentException) {
             ErrorBody("http_${status.value}", text.take(200))
         }
-        return ApiException.Http(status.value, body.error, body.message)
+        return ApiException.Http(status.value, body.error, body.message, body.details)
     }
 
     private fun ApiException.Http.isTokenProblem(): Boolean =

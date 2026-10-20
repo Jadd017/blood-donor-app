@@ -1,5 +1,6 @@
 package com.jadbarakat.blooddonor.server
 
+import com.jadbarakat.blooddonor.server.auth.FirebaseAccountDeleter
 import com.jadbarakat.blooddonor.server.auth.FirebaseTokenVerifier
 import com.jadbarakat.blooddonor.server.auth.initFirebase
 import com.jadbarakat.blooddonor.server.data.ExposedDeviceTokenRepository
@@ -8,6 +9,8 @@ import com.jadbarakat.blooddonor.server.jobs.startBackgroundJobs
 import com.jadbarakat.blooddonor.server.matching.MatchingConfig
 import com.jadbarakat.blooddonor.server.api.RequestEvent
 import com.jadbarakat.blooddonor.server.data.ExposedPledgeRepository
+import com.jadbarakat.blooddonor.server.data.ExposedSafetyRepository
+import com.jadbarakat.blooddonor.server.safety.SafetyConfig
 import com.jadbarakat.blooddonor.server.matching.HelperCounter
 import com.jadbarakat.blooddonor.server.matching.WaveService
 import com.jadbarakat.blooddonor.server.push.FcmPushSender
@@ -61,6 +64,11 @@ private fun start() {
     } catch (e: IllegalArgumentException) {
         throw StartupException("Invalid matching setting: ${e.message}")
     }
+    val safetyConfig = try {
+        SafetyConfig.fromEnv(System::getenv)
+    } catch (e: IllegalArgumentException) {
+        throw StartupException("Invalid safety setting: ${e.message}")
+    }
 
     val db = Database.connect(dataSource)
     val clock = Clock.system(ZoneId.of("Asia/Beirut"))
@@ -88,6 +96,8 @@ private fun start() {
             requests = requests,
             deviceTokens = deviceTokens,
             pledges = pledges,
+            safety = ExposedSafetyRepository(db),
+            accountDeleter = FirebaseAccountDeleter.create(firebase),
             // Wave 1 runs in the background so creating a request stays fast.
             onRequestCreated = { id ->
                 launch {
@@ -116,6 +126,7 @@ private fun start() {
                 }
             },
             config = config,
+            safetyConfig = safetyConfig,
             clock = clock,
             healthCheck = { dataSource.connection.use { it.isValid(2) } },
         )

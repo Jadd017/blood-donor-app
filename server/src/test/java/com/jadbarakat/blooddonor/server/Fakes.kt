@@ -1,12 +1,21 @@
 package com.jadbarakat.blooddonor.server
 
+import com.jadbarakat.blooddonor.server.auth.AccountDeleter
 import com.jadbarakat.blooddonor.server.auth.TokenVerifier
 import com.jadbarakat.blooddonor.server.auth.VerifiedToken
 import com.jadbarakat.blooddonor.server.data.Area
+import com.jadbarakat.blooddonor.server.data.AccountDeletion
 import com.jadbarakat.blooddonor.server.data.AreaRepository
+import com.jadbarakat.blooddonor.server.data.BlockEntry
 import com.jadbarakat.blooddonor.server.data.BloodRequest
 import com.jadbarakat.blooddonor.server.data.BloodRequestRepository
 import com.jadbarakat.blooddonor.server.data.CommitResult
+import com.jadbarakat.blooddonor.server.data.CreateRequestResult
+import com.jadbarakat.blooddonor.server.data.DELETED_HELPER_NAME
+import com.jadbarakat.blooddonor.server.data.DELETED_USER_ID
+import com.jadbarakat.blooddonor.server.data.PostingLimits
+import com.jadbarakat.blooddonor.server.data.ReportResult
+import com.jadbarakat.blooddonor.server.data.SafetyRepository
 import com.jadbarakat.blooddonor.server.data.GeoPoint
 import com.jadbarakat.blooddonor.server.data.Helper
 import com.jadbarakat.blooddonor.server.data.HelperConfirmResult
@@ -22,6 +31,7 @@ import com.jadbarakat.blooddonor.server.matching.DonorCandidate
 import com.jadbarakat.blooddonor.server.push.PushMessage
 import com.jadbarakat.blooddonor.server.push.PushResult
 import com.jadbarakat.blooddonor.server.push.PushSender
+import com.jadbarakat.blooddonor.server.safety.SafetyConfig
 import com.jadbarakat.blooddonor.server.data.Hospital
 import com.jadbarakat.blooddonor.server.data.HospitalRepository
 import com.jadbarakat.blooddonor.server.data.NewBloodRequest
@@ -36,6 +46,9 @@ import java.time.Duration
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
+
+/** Posting limits high enough not to matter, for tests that aren't about the posting rules. */
+val RELAXED_POSTING = SafetyConfig(maxOpenRequests = 50, maxOpenRequestsNewAccount = 50, maxRequestsPer24h = 50)
 
 /** Accepts any token registered in [tokens]; everything else is invalid. */
 class FakeTokenVerifier(private val tokens: Map<String, VerifiedToken>) : TokenVerifier {
@@ -71,6 +84,8 @@ class InMemoryUserRepository : UserRepository {
             areaId = input.areaId,
             lastDonationDate = input.lastDonationDate,
             isDonor = input.isDonor,
+            createdAt = rows[firebaseUid]?.createdAt ?: Instant.EPOCH,
+            notificationsPausedUntil = rows[firebaseUid]?.notificationsPausedUntil,
         )
         rows[firebaseUid] = profile
         return profile
@@ -133,6 +148,25 @@ class InMemoryBloodRequestRepository(private val hospitals: FakeHospitalReposito
         return request
     }
 
+    override suspend fun createIfAllowed(
+        requesterId: Long,
+        input: NewBloodRequest,
+        now: Instant,
+        limits: PostingLimits,
+    ): CreateRequestResult {
+        val mine = rows.values.filter { it.requesterId == requesterId }
+        val open = mine.filter { it.status == RequestStatus.OPEN && !it.isOverdue(now) }
+        if (open.any { it.hospitalId == input.hospitalId && it.bloodType == input.bloodType && it.component == input.component }) {
+            return CreateRequestResult.Duplicate
+        }
+        if (open.size >= limits.maxOpen) return CreateRequestResult.TooManyOpen(limits.maxOpen)
+        val recent = mine.map { it.createdAt }.filter { it.isAfter(now.minus(limits.dailyWindow)) }.sorted()
+        if (recent.size >= limits.maxPer24h) {
+            return CreateRequestResult.DailyLimit(recent[recent.size - limits.maxPer24h].plus(limits.dailyWindow))
+        }
+        return CreateRequestResult.Created(create(requesterId, input, now))
+    }
+
     override suspend fun findById(id: Long) = rows[id]
 
     override suspend fun listByRequester(requesterId: Long) =
@@ -189,12 +223,14 @@ data class FakeDonor(
     val sex: String? = "male",
     val lastDonationDate: LocalDate? = null,
     val isDonor: Boolean = true,
+    val notificationsPausedUntil: Instant? = null,
 )
 
 /** Mirrors the SQL filters of ExposedMatchingRepository over in-memory rows. */
 class FakeMatchingRepository(
     private val requests: InMemoryBloodRequestRepository,
     private val tokens: InMemoryDeviceTokenRepository,
+    private val safety: InMemorySafetyRepository? = null,
 ) : MatchingRepository {
     val donors = mutableListOf<FakeDonor>()
 
@@ -217,9 +253,12 @@ class FakeMatchingRepository(
         donorTypes: Set<String>,
         radiusMeters: Double?,
         since: Instant,
+        now: Instant,
     ): List<DonorCandidate> =
         donors
             .filter { it.isDonor && it.bloodType in donorTypes && it.userId != request.requesterId }
+            .filter { donor -> donor.notificationsPausedUntil?.isAfter(now) != true }
+            .filter { donor -> safety?.blocked(donor.userId, request.requesterId) != true }
             .filter { donor -> tokens.tokens.containsValue(donor.userId) }
             .filter { donor -> requests.notifications.none { it.requestId == request.id && it.userId == donor.userId } }
             .filter { radiusMeters == null || it.distanceKm * 1000 <= radiusMeters }
@@ -299,8 +338,11 @@ class InMemoryPledgeRepository(
         rows.filter { it.requestId == requestId && it.status != PledgeStatus.WITHDRAWN }
             .sortedWith(compareBy<Pledge> { it.committedAt }.thenBy { it.id })
             .map { pledge ->
-                val user = users.findById(pledge.donorId)!!
-                Helper(pledge.id, user.id, user.fullName, user.bloodType, user.phone, pledge.status, pledge.committedAt, pledge.requesterOutcome)
+                val user = users.findById(pledge.donorId)
+                Helper(
+                    pledge.id, pledge.donorId, user?.fullName ?: DELETED_HELPER_NAME, user?.bloodType, user?.phone.orEmpty(),
+                    pledge.status, pledge.committedAt, pledge.requesterOutcome,
+                )
             }
 
     override suspend fun helperCount(requestId: Long, now: Instant, arrivalWindow: Duration): Int {
@@ -349,7 +391,9 @@ class InMemoryPledgeRepository(
                 !HelperRules.arrivalEnds(pledge.committedAt, request.neededBy, arrivalWindow).isAfter(now)
             if (!due) return@mapNotNull null
             remindersSent[pledge.id] = now
-            HelperReminder(pledge.id, pledge.requestId, request.requesterId, users.findById(pledge.donorId)!!.fullName)
+            val donor = users.findById(pledge.donorId) ?: return@mapNotNull null
+            if (request.requesterId == DELETED_USER_ID) return@mapNotNull null
+            HelperReminder(pledge.id, pledge.requestId, request.requesterId, donor.fullName)
         }
 
     override suspend fun noShowCount(donorId: Long) =
@@ -366,5 +410,123 @@ class InMemoryPledgeRepository(
         val index = rows.indexOfFirst { it.requestId == requestId && it.donorId == donorId && it.status == PledgeStatus.COMMITTED }
         if (index < 0) return null
         return rows[index].copy(status = status).also { rows[index] = it }
+    }
+}
+
+/** Mirrors ExposedSafetyRepository over the other in-memory tables. */
+class InMemorySafetyRepository(
+    private val users: InMemoryUserRepository,
+    private val requests: InMemoryBloodRequestRepository,
+    private val pledges: InMemoryPledgeRepository? = null,
+    private val tokens: InMemoryDeviceTokenRepository? = null,
+) : SafetyRepository {
+    data class ReportRow(val requestId: Long, val reporterId: Long, val reason: String, val details: String?, val createdAt: Instant)
+    data class StrikeRow(val userId: Long, val requestId: Long?, val createdAt: Instant)
+    data class BlockRow(val blockerId: Long, val blockedId: Long, val viaRequestId: Long?, val createdAt: Instant)
+
+    val reports = mutableListOf<ReportRow>()
+    val strikes = mutableListOf<StrikeRow>()
+    val blockRows = mutableListOf<BlockRow>()
+
+    fun blocked(a: Long, b: Long) = blockRows.any { (it.blockerId == a && it.blockedId == b) || (it.blockerId == b && it.blockedId == a) }
+
+    override suspend fun strikeTimes(userId: Long) = strikes.filter { it.userId == userId }.map { it.createdAt }.sorted()
+
+    override suspend fun report(requestId: Long, reporterId: Long, reason: String, details: String?, now: Instant, reportsToHide: Int): ReportResult {
+        if (reports.any { it.requestId == requestId && it.reporterId == reporterId }) return ReportResult.AlreadyReported
+        reports += ReportRow(requestId, reporterId, reason, details, now)
+        val request = requests.rows.getValue(requestId)
+        if (request.hidden) return ReportResult.Reported(hidden = false)
+        if (reports.filter { it.requestId == requestId }.map { it.reporterId }.distinct().size < reportsToHide) {
+            return ReportResult.Reported(hidden = false)
+        }
+        requests.rows[requestId] = request.copy(
+            hidden = true,
+            status = if (request.status == RequestStatus.OPEN) RequestStatus.CANCELLED else request.status,
+            closedAt = request.closedAt ?: now,
+        )
+        if (request.requesterId != DELETED_USER_ID && strikes.none { it.requestId == requestId }) {
+            strikes += StrikeRow(request.requesterId, requestId, now)
+        }
+        return ReportResult.Reported(hidden = true)
+    }
+
+    override suspend fun pauseIfNoShows(donorId: Long, since: Instant, minRequesters: Int, now: Instant, pauseUntil: Instant): Instant? {
+        val entry = users.rows.entries.firstOrNull { it.value.id == donorId } ?: return null
+        if (entry.value.notificationsPausedUntil?.isAfter(now) == true) return null
+        val requesters = pledges!!.rows
+            .filter { it.donorId == donorId && it.requesterOutcome == RequesterOutcome.NO_SHOW && !it.requesterConfirmedAt!!.isBefore(since) }
+            .mapNotNull { requests.rows[it.requestId]?.requesterId?.takeIf { id -> id != DELETED_USER_ID } }
+            .toSet()
+        if (requesters.size < minRequesters) return null
+        entry.setValue(entry.value.copy(notificationsPausedUntil = pauseUntil))
+        return pauseUntil
+    }
+
+    override suspend fun block(blockerId: Long, blockedId: Long, viaRequestId: Long?, now: Instant) {
+        if (blockRows.none { it.blockerId == blockerId && it.blockedId == blockedId }) {
+            blockRows += BlockRow(blockerId, blockedId, viaRequestId, now)
+        }
+    }
+
+    override suspend fun unblock(blockerId: Long, blockedId: Long) {
+        blockRows.removeAll { it.blockerId == blockerId && it.blockedId == blockedId }
+    }
+
+    override suspend fun blocks(blockerId: Long): List<BlockEntry> =
+        blockRows.filter { it.blockerId == blockerId }
+            .sortedWith(compareByDescending<BlockRow> { it.createdAt }.thenBy { it.blockedId })
+            .mapNotNull { row ->
+                val user = users.findById(row.blockedId) ?: return@mapNotNull null
+                val request = row.viaRequestId?.let { requests.rows[it] }
+                BlockEntry(
+                    blockedId = row.blockedId,
+                    fullName = user.fullName.takeIf { row.viaRequestId == null },
+                    requestHospitalName = request?.hospitalName,
+                    requestCreatedAt = request?.createdAt,
+                    createdAt = row.createdAt,
+                )
+            }
+
+    override suspend fun blockedEitherWay(userId: Long): Set<Long> =
+        blockRows.mapNotNull {
+            when (userId) {
+                it.blockerId -> it.blockedId
+                it.blockedId -> it.blockerId
+                else -> null
+            }
+        }.toSet()
+
+    override suspend fun helpedRequester(donorId: Long, requesterId: Long) =
+        pledges!!.rows.any { it.donorId == donorId && requests.rows[it.requestId]?.requesterId == requesterId }
+
+    override suspend fun deleteAccount(userId: Long, now: Instant): AccountDeletion? {
+        val uid = users.rows.entries.firstOrNull { it.value.id == userId }?.key ?: return null
+        val cancelled = requests.rows.values.filter { it.requesterId == userId && it.status == RequestStatus.OPEN }.map { it.id }
+        cancelled.forEach { id -> requests.rows[id] = requests.rows.getValue(id).copy(status = RequestStatus.CANCELLED, closedAt = now) }
+        val pledgeRows = pledges?.rows ?: mutableListOf()
+        val withdrawn = pledgeRows.filter { it.donorId == userId && it.status == PledgeStatus.COMMITTED && it.requesterOutcome == null }
+        pledgeRows.replaceAll { if (it in withdrawn) it.copy(status = PledgeStatus.WITHDRAWN) else it }
+        tokens?.tokens?.values?.removeAll { it == userId }
+        blockRows.removeAll { it.blockerId == userId || it.blockedId == userId }
+        reports.removeAll { it.reporterId == userId }
+        // What ON DELETE CASCADE / SET NULL do in the real tables:
+        strikes.removeAll { it.userId == userId }
+        requests.notifications.removeAll { it.userId == userId }
+        requests.rows.replaceAll { _, r -> if (r.requesterId == userId) r.copy(requesterId = DELETED_USER_ID, note = null) else r }
+        pledgeRows.replaceAll { if (it.donorId == userId) it.copy(donorId = DELETED_USER_ID) else it }
+        users.rows.remove(uid)
+        return AccountDeletion(cancelled, withdrawn.map { it.requestId }.distinct())
+    }
+}
+
+/** Records the Firebase users it deleted. Fails while [failing] is true, like a Firebase outage. */
+class FakeAccountDeleter : AccountDeleter {
+    val deleted = mutableListOf<String>()
+    var failing = false
+
+    override suspend fun deleteFirebaseUser(uid: String) {
+        if (failing) throw IllegalStateException("Firebase unavailable")
+        deleted += uid
     }
 }
