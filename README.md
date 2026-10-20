@@ -71,6 +71,20 @@ Only those donors get a push notification. If not enough people respond, the sea
 
 ---
 
+## Developer scripts
+
+PowerShell helpers in `dev/` for local testing only; they're never used in production.
+
+- **`dev/reset-test-data.ps1`** clears every user's last donation date, cancels all open requests, and deletes all request notifications and pledges in the local database, so the same accounts can be matched again. It reads connection settings from `server/.env`, refuses to run unless the database host is localhost, and prints what it changed.
+- **`dev/dev-run.ps1`** points `JAVA_HOME` at Android Studio's JBR, restarts adb, installs the debug app on every connected device, sets up `adb reverse tcp:8080 tcp:8080` on each one, and launches the app. It warns if the server isn't answering on `http://localhost:8080/health`.
+
+```powershell
+powershell -ExecutionPolicy Bypass -File dev\reset-test-data.ps1
+powershell -ExecutionPolicy Bypass -File dev\dev-run.ps1
+```
+
+---
+
 ## Architecture
 
 ```mermaid
