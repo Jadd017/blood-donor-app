@@ -48,7 +48,7 @@ class PledgeRoutesTest {
     private val events = mutableListOf<RequestEvent>()
 
     private val verifier = FakeTokenVerifier(
-        listOf("alice", "bob", "carol", "erin", "frank").associate {
+        listOf("alice", "bob", "carol", "dave", "erin", "frank").associate {
             "$it-token" to VerifiedToken("uid-$it", "$it@example.com", emailVerified = true)
         }
     )
@@ -100,6 +100,15 @@ class PledgeRoutesTest {
             contentType(ContentType.Application.Json)
             setBody("""{"donated":$donated}""")
         }
+
+    private suspend fun ApplicationTestBuilder.confirmHelper(id: Long, pledgeId: Long, outcome: String, who: String = "alice") =
+        client.post("/api/v1/requests/$id/helpers/$pledgeId/confirm") {
+            bearerAuth("$who-token")
+            contentType(ContentType.Application.Json)
+            setBody("""{"outcome":"$outcome"}""")
+        }
+
+    private fun pledgeId(id: Long, donorId: Long) = runBlocking { pledges.find(id, donorId)!!.id }
 
     private suspend fun ApplicationTestBuilder.view(id: Long, who: String) =
         json(client.get("/api/v1/requests/$id") { bearerAuth("$who-token") }.bodyAsText())
@@ -292,6 +301,129 @@ class PledgeRoutesTest {
         client.post("/api/v1/requests/$id/cancel") { bearerAuth("alice-token") }
         assertError(donation(id, true), HttpStatusCode.Conflict, "no_pledge")
         assertError(donation(id, true, "carol"), HttpStatusCode.NotFound, "request_not_found")
+    }
+
+    // --- The requester confirms each helper ---
+
+    /** Dave: a second eligible O- donor, notified about [id]. */
+    private fun dave(id: Long): Long {
+        val daveId = user("dave", "Dave Ghanem", "+96181666666", "O-")
+        requests.notifications += SentNotification(id, daveId, 1, clock.instant())
+        return daveId
+    }
+
+    @Test
+    fun `only the owner can confirm a helper`() = test {
+        val id = createRequest()
+        help(id)
+        val pledge = pledgeId(id, bobId)
+        // Someone else's request is reported as missing, as everywhere else.
+        assertError(confirmHelper(id, pledge, "donated", who = "bob"), HttpStatusCode.NotFound, "request_not_found")
+        assertError(confirmHelper(id, pledge, "no_show", who = "carol"), HttpStatusCode.NotFound, "request_not_found")
+        assertError(confirmHelper(id, pledge, "donated", who = "erin"), HttpStatusCode.NotFound, "request_not_found")
+        assertNull(pledges.find(id, bobId)!!.requesterOutcome)
+
+        assertEquals(HttpStatusCode.OK, confirmHelper(id, pledge, "donated").status)
+    }
+
+    @Test
+    fun `only committed pledges of this request can be confirmed, once`() = test {
+        val id = createRequest()
+        val other = createRequest()
+        help(id)
+        help(other)
+        val pledge = pledgeId(id, bobId)
+        assertError(confirmHelper(id, pledge, "maybe"), HttpStatusCode.BadRequest, "invalid_outcome")
+        assertError(confirmHelper(id, pledgeId(other, bobId), "donated"), HttpStatusCode.NotFound, "helper_not_found")
+        assertError(confirmHelper(id, 999, "donated"), HttpStatusCode.NotFound, "helper_not_found")
+
+        withdraw(other)
+        assertError(confirmHelper(other, pledgeId(other, bobId), "donated"), HttpStatusCode.Conflict, "helper_withdrew")
+
+        assertEquals(HttpStatusCode.OK, confirmHelper(id, pledge, "no_show").status)
+        assertError(confirmHelper(id, pledge, "donated"), HttpStatusCode.Conflict, "helper_already_confirmed")
+        // A confirmed donor can no longer withdraw.
+        assertError(withdraw(id), HttpStatusCode.Conflict, "pledge_closed")
+    }
+
+    @Test
+    fun `donated sets confirmed_donation and the donor's last donation date, and keeps counting`() = test {
+        val id = createRequest(units = 1)
+        help(id)
+        val response = confirmHelper(id, pledgeId(id, bobId), "donated")
+        assertEquals(HttpStatusCode.OK, response.status)
+        val owner = json(response.bodyAsText())
+        val helper = owner["helpers"]!!.jsonArray.single().jsonObject
+        assertEquals("donated", helper.str("state"))
+        assertEquals(1, owner["confirmedDonatedCount"]!!.jsonPrimitive.int)
+        assertEquals(0, owner["onTheWayCount"]!!.jsonPrimitive.int)
+
+        val pledge = pledges.find(id, bobId)!!
+        assertTrue(pledge.confirmedDonation)
+        assertEquals(PledgeStatus.DONATED, pledge.status, "the donor no longer needs to answer")
+        assertEquals(clock.instant(), pledge.requesterConfirmedAt)
+        assertEquals(today, users.findById(bobId)!!.lastDonationDate)
+
+        clock.now = clock.now.plus(Duration.ofHours(5))
+        assertEquals(1, view(id, "alice")["committedCount"]!!.jsonPrimitive.int, "a confirmed donation counts after the window")
+    }
+
+    @Test
+    fun `no_show removes the donor from the helper count immediately and is counted per donor`() = test {
+        val id = createRequest()
+        val daveId = dave(id)
+        help(id)
+        help(id, "dave")
+        assertEquals(2, view(id, "alice")["onTheWayCount"]!!.jsonPrimitive.int)
+
+        val owner = json(confirmHelper(id, pledgeId(id, bobId), "no_show").bodyAsText())
+        assertEquals(1, owner["committedCount"]!!.jsonPrimitive.int)
+        assertEquals(1, owner["onTheWayCount"]!!.jsonPrimitive.int)
+        assertEquals(0, owner["confirmedDonatedCount"]!!.jsonPrimitive.int)
+        val states = owner["helpers"]!!.jsonArray.associate { it.jsonObject.str("fullName") to it.jsonObject.str("state") }
+        assertEquals(mapOf("Bob Khoury" to "no_show", "Dave Ghanem" to "on_the_way"), states, "no-shows stay in the list")
+        assertEquals(RequestEvent.HelperNoShow(id), events.last())
+        assertFalse(pledges.find(id, bobId)!!.confirmedDonation)
+        assertNull(users.findById(bobId)!!.lastDonationDate)
+        assertEquals(1, runBlocking { pledges.noShowCount(bobId) })
+        assertEquals(0, runBlocking { pledges.noShowCount(daveId) })
+    }
+
+    @Test
+    fun `after the arrival window a helper stops counting until the requester confirms`() = test {
+        val id = createRequest()
+        help(id)
+        val helper = view(id, "alice")["helpers"]!!.jsonArray.single().jsonObject
+        assertEquals("on_the_way", helper.str("state"))
+        assertEquals(clock.instant().plus(Duration.ofHours(3)).toString(), helper.str("arrivalEndsAt"))
+
+        clock.now = clock.now.plus(Duration.ofHours(3))
+        val owner = view(id, "alice")
+        assertEquals("awaiting_confirmation", owner["helpers"]!!.jsonArray.single().jsonObject.str("state"))
+        assertEquals(0, owner["committedCount"]!!.jsonPrimitive.int)
+        assertEquals("committed", pledges.find(id, bobId)!!.status, "no status change")
+
+        // The requester can still confirm after the window.
+        assertEquals(1, json(confirmHelper(id, pledgeId(id, bobId), "donated").bodyAsText())["committedCount"]!!.jsonPrimitive.int)
+    }
+
+    @Test
+    fun `the donor's own answer doesn't set confirmed_donation, and the requester can still confirm`() = test {
+        val id = createRequest()
+        help(id)
+        clock.now = clock.now.plus(Duration.ofHours(3))
+        donation(id, true)
+        val pledge = pledges.find(id, bobId)!!
+        assertEquals(PledgeStatus.DONATED, pledge.status)
+        assertFalse(pledge.confirmedDonation)
+        assertNull(pledge.requesterOutcome)
+        assertEquals(today, users.findById(bobId)!!.lastDonationDate)
+        val owner = view(id, "alice")
+        assertEquals(0, owner["confirmedDonatedCount"]!!.jsonPrimitive.int)
+        assertEquals("awaiting_confirmation", owner["helpers"]!!.jsonArray.single().jsonObject.str("state"))
+
+        assertEquals(HttpStatusCode.OK, confirmHelper(id, pledge.id, "no_show").status)
+        assertFalse(pledges.find(id, bobId)!!.confirmedDonation)
     }
 
     // --- for-me ---

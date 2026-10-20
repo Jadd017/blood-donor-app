@@ -30,6 +30,7 @@ import java.time.Clock
 import java.time.ZoneId
 import javax.sql.DataSource
 import kotlin.system.exitProcess
+import kotlin.time.toJavaDuration
 
 private val log = LoggerFactory.getLogger("com.jadbarakat.blooddonor.server.Main")
 
@@ -72,11 +73,11 @@ private fun start() {
         matching = ExposedMatchingRepository(db),
         tokens = deviceTokens,
         push = push,
-        helpers = HelperCounter { pledges.helperCount(it) },
+        helpers = HelperCounter { id, now -> pledges.helperCount(id, now, config.arrivalWindow.toJavaDuration()) },
         config = config,
         clock = clock,
     )
-    val notifier = RequestNotifier(requests, pledges, deviceTokens, push, clock)
+    val notifier = RequestNotifier(requests, pledges, deviceTokens, push, clock, config.arrivalWindow.toJavaDuration())
     val port = System.getenv("PORT")?.toIntOrNull() ?: 8080
     embeddedServer(Netty, port = port) {
         module(
@@ -99,12 +100,14 @@ private fun start() {
                     }
                 }
             },
-            // Push notifications run in the background; a withdrawal may also free up the next wave.
+            // Push notifications run in the background; a withdrawal or no-show may also free up the next wave.
             onRequestEvent = { event ->
                 launch {
                     try {
                         notifier.handle(event)
-                        if (event is RequestEvent.DonorWithdrew) waves.runDueWaveFor(event.requestId)
+                        if (event is RequestEvent.DonorWithdrew || event is RequestEvent.HelperNoShow) {
+                            waves.runDueWaveFor(event.requestId)
+                        }
                     } catch (e: CancellationException) {
                         throw e
                     } catch (e: Exception) {

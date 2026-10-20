@@ -164,6 +164,7 @@ fun ProfileRoot(
                         uiState = requestsState,
                         onFulfill = requestsViewModel::fulfill,
                         onCancel = requestsViewModel::cancel,
+                        onConfirmHelper = requestsViewModel::confirmHelper,
                         onBack = requestsViewModel::backToHome,
                         modifier = modifier,
                     )

@@ -17,7 +17,8 @@ import kotlin.time.Duration
  * Every [interval], until the server stops:
  * 1. marks open requests past their deadline as expired (reads already treat them as expired,
  *    so a missed run only delays the stored value) and tells their committed donors, then
- * 2. sends the notification waves that are due.
+ * 2. sends the notification waves that are due, then
+ * 3. asks requesters to confirm helpers whose arrival window just ended.
  */
 fun Application.startBackgroundJobs(
     requests: BloodRequestRepository,
@@ -36,6 +37,10 @@ fun Application.startBackgroundJobs(
                 }
             }
             runStep("Notification waves") { waves.runDueWaves() }
+            runStep("Helper reminders") {
+                val sent = notifier.sendHelperReminders()
+                if (sent > 0) log.info("Sent {} helper confirmation reminder(s)", sent)
+            }
             delay(interval)
         }
     }

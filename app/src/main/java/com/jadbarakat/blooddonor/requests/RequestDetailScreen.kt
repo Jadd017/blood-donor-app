@@ -35,6 +35,8 @@ import androidx.compose.ui.unit.dp
 import com.jadbarakat.blooddonor.R
 import com.jadbarakat.blooddonor.data.BloodRequest
 import com.jadbarakat.blooddonor.data.Helper
+import com.jadbarakat.blooddonor.data.HelperOutcome
+import com.jadbarakat.blooddonor.data.HelperState
 import com.jadbarakat.blooddonor.data.PledgeStatus
 import com.jadbarakat.blooddonor.data.RequestStatus
 import com.jadbarakat.blooddonor.ui.resolve
@@ -47,6 +49,7 @@ fun RequestDetailScreen(
     uiState: RequestsUiState,
     onFulfill: () -> Unit,
     onCancel: () -> Unit,
+    onConfirmHelper: (pledgeId: Long, outcome: String) -> Unit,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -70,6 +73,9 @@ fun RequestDetailScreen(
     val now = rememberNow()
     val status = request.effectiveStatus(now)
     var pending by rememberSaveable { mutableStateOf<PendingAction?>(null) }
+    // The helper being confirmed, and as what (HelperOutcome).
+    var pendingHelper by rememberSaveable { mutableStateOf<Long?>(null) }
+    var pendingOutcome by rememberSaveable { mutableStateOf<String?>(null) }
 
     Column(
         modifier = modifier
@@ -106,8 +112,9 @@ fun RequestDetailScreen(
         request.committedCount?.let { committed ->
             Card(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    val donated = request.confirmedDonatedCount ?: 0
                     Text(
-                        stringResource(R.string.request_progress, committed, request.unitsNeeded),
+                        stringResource(R.string.request_progress, donated, request.onTheWayCount ?: (committed - donated)),
                         style = MaterialTheme.typography.titleMedium,
                     )
                     LinearProgressIndicator(
@@ -121,7 +128,14 @@ fun RequestDetailScreen(
             }
         }
         if (request.helpers.isNotEmpty()) {
-            HelpersList(request.helpers)
+            HelpersList(
+                helpers = request.helpers,
+                enabled = !uiState.isActing,
+                onConfirm = { pledgeId, outcome ->
+                    pendingHelper = pledgeId
+                    pendingOutcome = outcome
+                },
+            )
         }
 
         uiState.detailError?.let {
@@ -151,6 +165,47 @@ fun RequestDetailScreen(
         TextButton(onClick = onBack, enabled = !uiState.isActing, modifier = Modifier.fillMaxWidth()) {
             Text(stringResource(R.string.request_button_back))
         }
+    }
+
+    val confirming = request.helpers.firstOrNull { it.pledgeId == pendingHelper }
+    val outcome = pendingOutcome
+    if (confirming != null && outcome != null) {
+        val firstName = confirming.fullName.trim().substringBefore(' ')
+        val donated = outcome == HelperOutcome.DONATED
+        val dismiss = {
+            pendingHelper = null
+            pendingOutcome = null
+        }
+        AlertDialog(
+            onDismissRequest = dismiss,
+            title = {
+                Text(
+                    stringResource(
+                        if (donated) R.string.request_helper_donated_confirm_title else R.string.request_helper_no_show_confirm_title,
+                        firstName,
+                    )
+                )
+            },
+            text = {
+                Text(
+                    stringResource(
+                        if (donated) R.string.request_helper_donated_confirm_message else R.string.request_helper_no_show_confirm_message,
+                        firstName,
+                    )
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    dismiss()
+                    onConfirmHelper(confirming.pledgeId, outcome)
+                }) {
+                    Text(stringResource(if (donated) R.string.request_helper_button_donated else R.string.request_helper_button_no_show))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = dismiss) { Text(stringResource(R.string.request_confirm_back)) }
+            },
+        )
     }
 
     pending?.let { action ->
@@ -183,32 +238,61 @@ fun RequestDetailScreen(
     }
 }
 
-/** The donors who committed, each with a Call button. Only the owner gets this data. */
+/**
+ * The donors who committed, each with a Call button and, until confirmed, "Donated" and "Didn't
+ * come" buttons. Only the owner gets this data.
+ */
 @Composable
-private fun HelpersList(helpers: List<Helper>) {
+private fun HelpersList(helpers: List<Helper>, enabled: Boolean, onConfirm: (pledgeId: Long, outcome: String) -> Unit) {
     val context = LocalContext.current
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(stringResource(R.string.request_helpers_title), style = MaterialTheme.typography.titleMedium)
+        if (helpers.any { it.canConfirm }) {
+            Text(
+                stringResource(R.string.request_helpers_confirm_hint),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.primary,
+            )
+        }
         helpers.forEach { helper ->
             Card(Modifier.fillMaxWidth()) {
-                Row(
+                Column(
                     Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    Column(Modifier.weight(1f)) {
-                        Text(helper.fullName, style = MaterialTheme.typography.bodyLarge)
-                        Text(
-                            listOfNotNull(
-                                helper.bloodType,
-                                stringResource(R.string.request_helper_donated).takeIf { helper.status == PledgeStatus.DONATED },
-                            ).joinToString(" · "),
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text(helper.fullName, style = MaterialTheme.typography.bodyLarge)
+                            Text(
+                                listOfNotNull(helper.bloodType, helperStatusText(helper)).joinToString(" · "),
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = when (helper.state) {
+                                    HelperState.DONATED -> MaterialTheme.colorScheme.primary
+                                    HelperState.NO_SHOW -> MaterialTheme.colorScheme.error
+                                    else -> MaterialTheme.colorScheme.onSurfaceVariant
+                                },
+                            )
+                        }
+                        OutlinedButton(onClick = { dial(context, helper.phone) }) {
+                            Text(stringResource(R.string.request_helper_call))
+                        }
                     }
-                    OutlinedButton(onClick = { dial(context, helper.phone) }) {
-                        Text(stringResource(R.string.request_helper_call))
+                    if (helper.canConfirm) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Button(
+                                onClick = { onConfirm(helper.pledgeId, HelperOutcome.DONATED) },
+                                enabled = enabled,
+                                modifier = Modifier.weight(1f),
+                            ) { Text(stringResource(R.string.request_helper_button_donated)) }
+                            OutlinedButton(
+                                onClick = { onConfirm(helper.pledgeId, HelperOutcome.NO_SHOW) },
+                                enabled = enabled,
+                                modifier = Modifier.weight(1f),
+                            ) { Text(stringResource(R.string.request_helper_button_no_show)) }
+                        }
                     }
                 }
             }
@@ -219,6 +303,26 @@ private fun HelpersList(helpers: List<Helper>) {
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
+}
+
+/** My confirmation if I gave one; otherwise whether they still count, plus the donor's own answer. */
+@Composable
+private fun helperStatusText(helper: Helper): String {
+    val state = stringResource(
+        when (helper.state) {
+            HelperState.DONATED -> R.string.request_helper_state_donated
+            HelperState.NO_SHOW -> R.string.request_helper_state_no_show
+            HelperState.AWAITING_CONFIRMATION -> R.string.request_helper_state_awaiting
+            else -> R.string.request_helper_state_on_the_way
+        }
+    )
+    if (!helper.canConfirm) return state
+    val says = when (helper.status) {
+        PledgeStatus.DONATED -> stringResource(R.string.request_helper_says_donated)
+        PledgeStatus.NOT_DONATED -> stringResource(R.string.request_helper_says_not_donated)
+        else -> null
+    }
+    return listOfNotNull(state, says).joinToString(" · ")
 }
 
 /** Opens the dialer with [phone] filled in; ACTION_DIAL needs no call permission. */

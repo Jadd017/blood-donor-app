@@ -13,7 +13,11 @@ import com.jadbarakat.blooddonor.server.data.NewBloodRequest
 import com.jadbarakat.blooddonor.server.data.ProfileInput
 import com.jadbarakat.blooddonor.server.data.RequestStatus
 import kotlinx.coroutines.runBlocking
+import com.jadbarakat.blooddonor.server.data.CommitResult
+import com.jadbarakat.blooddonor.server.data.RequesterOutcome
+import java.time.Duration
 import java.time.Instant
+import java.time.LocalDate
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -94,6 +98,40 @@ class RequestNotifierTest {
         notifier.handle(RequestEvent.RequestClosed(request.id))
         assertEquals("The request at Rizk Hospital is closed. Thank you for offering to help.", message(0).body)
         assertEquals("request_closed", message(0).data["type"])
+    }
+
+    @Test
+    fun `the requester is reminded once per helper when the arrival window ends unconfirmed`() = runBlocking {
+        pledges.commit(request.id, bob, clock.instant(), 2)
+        val carolPledge = (pledges.commit(request.id, carol, clock.instant(), 2) as CommitResult.Committed).pledge
+        clock.now = clock.now.plus(Duration.ofMinutes(179))
+        assertEquals(0, notifier.sendHelperReminders(), "not before the window ends")
+
+        // Carol is confirmed in time: no reminder for her.
+        pledges.confirmHelper(request.id, carolPledge.id, RequesterOutcome.DONATED, LocalDate.of(2026, 6, 15), clock.instant())
+        clock.now = clock.now.plus(Duration.ofMinutes(1))
+        assertEquals(1, notifier.sendHelperReminders())
+        assertEquals(listOf("t-alice"), sentTo(0))
+        assertEquals("Did bob donate?", message(0).title)
+        assertEquals("Confirm in the app.", message(0).body)
+        assertEquals("confirm_helper", message(0).data["type"])
+        assertEquals("requester", message(0).data["view"])
+        assertNoPrivateData(message(0))
+
+        clock.now = clock.now.plus(Duration.ofMinutes(10))
+        assertEquals(0, notifier.sendHelperReminders(), "sent once")
+        assertEquals(1, push.sent.size)
+    }
+
+    @Test
+    fun `no reminders for cancelled requests or withdrawn pledges`() = runBlocking {
+        pledges.commit(request.id, bob, clock.instant(), 2)
+        pledges.commit(request.id, carol, clock.instant(), 2)
+        pledges.withdraw(request.id, carol, clock.instant())
+        requests.close(request.id, RequestStatus.CANCELLED, clock.instant())
+        clock.now = clock.now.plus(Duration.ofHours(4))
+        assertEquals(0, notifier.sendHelperReminders())
+        assertTrue(push.sent.isEmpty())
     }
 
     @Test

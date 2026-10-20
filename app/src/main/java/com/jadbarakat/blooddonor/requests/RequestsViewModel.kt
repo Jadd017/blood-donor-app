@@ -395,6 +395,9 @@ class RequestsViewModel(
 
     fun cancel() = act { repository.cancel(it) }
 
+    /** "Donated" or "Didn't come" for one helper ([com.jadbarakat.blooddonor.data.HelperOutcome]). */
+    fun confirmHelper(pledgeId: Long, outcome: String) = act { repository.confirmHelper(it, pledgeId, outcome) }
+
     private fun act(call: suspend (Long) -> BloodRequest) {
         val state = _uiState.value
         val id = state.detail?.id ?: return
@@ -407,9 +410,15 @@ class RequestsViewModel(
             } catch (e: CancellationException) {
                 throw e
             } catch (e: ApiException.Http) {
-                if (e.code == ErrorCodes.REQUEST_NOT_OPEN) {
+                val changed = when (e.code) {
+                    ErrorCodes.REQUEST_NOT_OPEN -> UiMessage(R.string.request_error_not_open)
+                    ErrorCodes.HELPER_NOT_FOUND, ErrorCodes.HELPER_WITHDREW, ErrorCodes.HELPER_ALREADY_CONFIRMED ->
+                        UiMessage(R.string.request_error_helper_changed)
+                    else -> null
+                }
+                if (changed != null) {
                     // Expired or changed elsewhere: show the current state.
-                    _uiState.update { it.copy(detailError = UiMessage(R.string.request_error_not_open)) }
+                    _uiState.update { it.copy(detailError = changed) }
                     runCatching { repository.get(id) }.getOrNull()?.let { fresh ->
                         _uiState.update { it.copy(detail = fresh).withUpdated(fresh) }
                     }

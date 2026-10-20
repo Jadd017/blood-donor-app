@@ -1,5 +1,6 @@
 package com.jadbarakat.blooddonor.server.data
 
+import java.time.Duration
 import java.time.Instant
 import java.time.LocalDate
 
@@ -49,16 +50,67 @@ data class Pledge(
     val status: String,
     /** The latest time the donor committed (withdrawing and committing again resets it). */
     val committedAt: Instant,
+    /** What the requester said after the blood bank told them: [RequesterOutcome] or null. */
+    val requesterOutcome: String? = null,
+    val requesterConfirmedAt: Instant? = null,
+    /** True only when the requester confirmed the donation (the donor's own answer never sets it). */
+    val confirmedDonation: Boolean = false,
 )
 
-/** A committed (or donated) donor, as shown to the requester. */
+object RequesterOutcome {
+    const val DONATED = "donated"
+    const val NO_SHOW = "no_show"
+    val ALL = setOf(DONATED, NO_SHOW)
+}
+
+/**
+ * Who counts as a helper. A pledge the requester confirmed as donated always counts. Otherwise a
+ * committed (or self-reported donated) pledge counts only during its arrival window, which ends
+ * [arrivalWindow] after committing or at the deadline, whichever comes first. The SQL in
+ * ExposedPledgeRepository mirrors this.
+ */
+object HelperRules {
+    fun arrivalEnds(committedAt: Instant, neededBy: Instant, arrivalWindow: Duration): Instant =
+        minOf(committedAt.plus(arrivalWindow), neededBy)
+
+    fun counts(
+        status: String,
+        requesterOutcome: String?,
+        committedAt: Instant,
+        neededBy: Instant,
+        now: Instant,
+        arrivalWindow: Duration,
+    ): Boolean = when (requesterOutcome) {
+        RequesterOutcome.DONATED -> true
+        RequesterOutcome.NO_SHOW -> false
+        else -> status in WAITING && now.isBefore(arrivalEnds(committedAt, neededBy, arrivalWindow))
+    }
+
+    /** Pledge statuses that may still count (the donor hasn't withdrawn or said no). */
+    val WAITING = setOf(PledgeStatus.COMMITTED, PledgeStatus.DONATED)
+}
+
+/** The outcome of the requester confirming a helper. */
+sealed interface HelperConfirmResult {
+    data class Confirmed(val pledge: Pledge) : HelperConfirmResult
+    data object NotFound : HelperConfirmResult
+    data object Withdrawn : HelperConfirmResult
+    data object AlreadyConfirmed : HelperConfirmResult
+}
+
+/** A pledge whose arrival window ended without the requester confirming it. */
+data class HelperReminder(val pledgeId: Long, val requestId: Long, val requesterId: Long, val donorFullName: String)
+
+/** A donor who committed (and didn't withdraw), as shown to the requester. */
 data class Helper(
+    val pledgeId: Long,
     val donorId: Long,
     val fullName: String,
     val bloodType: String?,
     val phone: String,
     val status: String,
     val committedAt: Instant,
+    val requesterOutcome: String? = null,
 )
 
 sealed interface CommitResult {

@@ -6,6 +6,8 @@ sealed interface RequestEvent {
 
     data class DonorCommitted(override val requestId: Long, val donorBloodType: String) : RequestEvent
     data class DonorWithdrew(override val requestId: Long) : RequestEvent
+    /** The requester said a committed donor didn't come. Nobody is notified; waves may resume. */
+    data class HelperNoShow(override val requestId: Long) : RequestEvent
     /** Fulfilled, cancelled or expired. */
     data class RequestClosed(override val requestId: Long) : RequestEvent
 }

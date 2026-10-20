@@ -61,21 +61,51 @@ data class BloodRequest(
     val status: String,
     val createdAt: String,
     val closedAt: String? = null,
-    /** Only in GET /requests/{id}: donors who committed (or donated), with their phone numbers. */
+    /** Only in GET /requests/{id}: donors who committed and didn't withdraw, with their phone numbers. */
     val helpers: List<Helper> = emptyList(),
-    /** Only in GET /requests/{id}: how many donors committed. */
+    /** Only in GET /requests/{id}: how many donors count as helping (confirmed donated + on the way). */
     val committedCount: Int? = null,
+    /** Only in GET /requests/{id}: donations I confirmed. */
+    val confirmedDonatedCount: Int? = null,
+    /** Only in GET /requests/{id}: unconfirmed donors still expected at the hospital. */
+    val onTheWayCount: Int? = null,
 )
 
 /** A donor helping with my request. */
 @Serializable
 data class Helper(
+    val pledgeId: Long,
     val fullName: String,
     val bloodType: String? = null,
     val phone: String,
+    /** The donor's own answer: committed, donated or not_donated ([PledgeStatus]). */
     val status: String,
     val committedAt: String,
-)
+    /** When the donor stops counting unless I confirm them. */
+    val arrivalEndsAt: String? = null,
+    /** My side: one of [HelperState]. */
+    val state: String = HelperState.ON_THE_WAY,
+) {
+    /** Whether I can still say "Donated" or "Didn't come". */
+    val canConfirm: Boolean get() = state == HelperState.ON_THE_WAY || state == HelperState.AWAITING_CONFIRMATION
+}
+
+object HelperState {
+    const val DONATED = "donated"
+    const val NO_SHOW = "no_show"
+    const val ON_THE_WAY = "on_the_way"
+    const val AWAITING_CONFIRMATION = "awaiting_confirmation"
+}
+
+/** What I tell the server about a helper, after the blood bank tells me. */
+object HelperOutcome {
+    const val DONATED = "donated"
+    const val NO_SHOW = "no_show"
+}
+
+/** Body of POST /api/v1/requests/{id}/helpers/{pledgeId}/confirm. */
+@Serializable
+data class HelperConfirmBody(val outcome: String)
 
 /** What a donor who was notified sees about a request (GET /requests/{id}, /requests/for-me). */
 @Serializable
@@ -141,6 +171,9 @@ object ErrorCodes {
     const val PLEDGE_CLOSED = "pledge_closed"
     const val NO_PLEDGE = "no_pledge"
     const val TOO_EARLY = "too_early"
+    const val HELPER_NOT_FOUND = "helper_not_found"
+    const val HELPER_WITHDREW = "helper_withdrew"
+    const val HELPER_ALREADY_CONFIRMED = "helper_already_confirmed"
 }
 
 object PledgeStatus {

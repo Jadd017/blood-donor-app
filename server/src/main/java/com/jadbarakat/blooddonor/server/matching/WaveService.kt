@@ -15,11 +15,12 @@ import java.time.LocalDate
 import kotlin.time.toJavaDuration
 
 /**
- * How many donors are helping with a request (committed + donated pledges). Once it reaches
- * units_needed, due waves are held back, not used up, so they go out if a donor withdraws.
+ * How many donors count as helping with a request at [now] (see HelperRules). Once it reaches
+ * units_needed + the buffer, due waves are held back, not used up, so they go out if a donor
+ * withdraws, doesn't show up or their arrival window ends.
  */
 fun interface HelperCounter {
-    suspend fun helpersFor(requestId: Long): Int
+    suspend fun helpersFor(requestId: Long, now: Instant): Int
 }
 
 data class WaveResult(
@@ -82,7 +83,7 @@ class WaveService(
     private suspend fun sendDueWave(request: BloodRequest, now: Instant): WaveResult? {
         if (request.effective(now).status != RequestStatus.OPEN) return null
         val wave = dueWave(request, now) ?: return null
-        if (helpers.helpersFor(request.id) >= request.unitsNeeded) return null
+        if (helpers.helpersFor(request.id, now) >= request.unitsNeeded + config.helperBuffer) return null
         if (!matching.claimWave(request.id, request.wavesSent, wave, now)) return null
 
         val radiusKm = config.waves[wave - 1].radiusKm

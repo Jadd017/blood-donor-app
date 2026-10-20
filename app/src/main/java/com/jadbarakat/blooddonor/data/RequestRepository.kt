@@ -79,6 +79,18 @@ class RequestRepository(private val api: ApiClient) {
             },
         ) { it.body<DonorRequest>() }
 
+    /** Confirms a helper of my request as donated or no-show ([HelperOutcome]); returns the updated request. */
+    suspend fun confirmHelper(id: Long, pledgeId: Long, outcome: String): BloodRequest =
+        api.send(
+            authenticated = true,
+            configure = {
+                method = HttpMethod.Post
+                url("$REQUESTS/$id/helpers/$pledgeId/confirm")
+                contentType(ContentType.Application.Json)
+                setBody(HelperConfirmBody(outcome))
+            },
+        ) { it.body<BloodRequest>() }
+
     suspend fun fulfill(id: Long): BloodRequest = post("$REQUESTS/$id/fulfill")
 
     suspend fun cancel(id: Long): BloodRequest = post("$REQUESTS/$id/cancel")

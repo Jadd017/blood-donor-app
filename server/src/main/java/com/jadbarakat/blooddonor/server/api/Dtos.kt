@@ -6,6 +6,7 @@ import com.jadbarakat.blooddonor.server.data.Helper
 import com.jadbarakat.blooddonor.server.data.Hospital
 import com.jadbarakat.blooddonor.server.data.UserProfile
 import kotlinx.serialization.Serializable
+import java.time.Instant
 
 @Serializable
 data class AreaResponse(val id: Int, val name: String, val district: String, val governorate: String)
@@ -62,21 +63,46 @@ data class BloodRequestResponse(
     val status: String,
     val createdAt: String,
     val closedAt: String? = null,
-    /** Only in GET /requests/{id} for the owner: committed and donated donors, with their phones. */
+    /** Only in the owner's view: donors who committed and didn't withdraw, with their phones. */
     val helpers: List<HelperResponse>? = null,
-    /** Only with [helpers]: how many donors committed (committed + donated). */
+    /** Only with [helpers]: how many donors count as helping right now ([confirmedDonatedCount] + [onTheWayCount]). */
     val committedCount: Int? = null,
+    /** Only with [helpers]: donations the requester confirmed. */
+    val confirmedDonatedCount: Int? = null,
+    /** Only with [helpers]: unconfirmed donors still within their arrival window. */
+    val onTheWayCount: Int? = null,
 )
 
 /** A donor helping with the owner's request. Only ever sent to the owner of that request. */
 @Serializable
 data class HelperResponse(
+    val pledgeId: Long,
     val fullName: String,
     val bloodType: String? = null,
     val phone: String,
+    /** The donor's side: committed, or what they answered to "Did you donate?" (donated, not_donated). */
     val status: String,
     val committedAt: String,
+    /** When the donor stops counting unless the requester confirms them. */
+    val arrivalEndsAt: String,
+    /** The requester's side: one of [HelperState]. */
+    val state: String,
 )
+
+object HelperState {
+    /** The requester confirmed the donation. */
+    const val DONATED = "donated"
+    /** The requester said the donor didn't come. */
+    const val NO_SHOW = "no_show"
+    /** Unconfirmed and still within the arrival window: counts as helping. */
+    const val ON_THE_WAY = "on_the_way"
+    /** Unconfirmed, and the window ended (or the donor said they didn't donate): no longer counts. */
+    const val AWAITING_CONFIRMATION = "awaiting_confirmation"
+}
+
+/** Body of POST /requests/{id}/helpers/{pledgeId}/confirm. [outcome] is "donated" or "no_show". */
+@Serializable
+data class HelperConfirmBody(val outcome: String)
 
 /** Body of PUT and DELETE /me/device-token. */
 @Serializable
@@ -148,7 +174,8 @@ fun BloodRequest.toResponse() = BloodRequestResponse(
     closedAt = closedAt?.toString(),
 )
 
-fun Helper.toResponse() = HelperResponse(fullName, bloodType, phone, status, committedAt.toString())
+fun Helper.toResponse(arrivalEndsAt: Instant, state: String) =
+    HelperResponse(pledgeId, fullName, bloodType, phone, status, committedAt.toString(), arrivalEndsAt.toString(), state)
 
 fun BloodRequest.toDonorResponse(committed: Boolean? = null, myPledge: PledgeResponse? = null) = DonorRequestResponse(
     id = id,

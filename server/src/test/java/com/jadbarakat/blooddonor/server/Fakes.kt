@@ -9,6 +9,10 @@ import com.jadbarakat.blooddonor.server.data.BloodRequestRepository
 import com.jadbarakat.blooddonor.server.data.CommitResult
 import com.jadbarakat.blooddonor.server.data.GeoPoint
 import com.jadbarakat.blooddonor.server.data.Helper
+import com.jadbarakat.blooddonor.server.data.HelperConfirmResult
+import com.jadbarakat.blooddonor.server.data.HelperReminder
+import com.jadbarakat.blooddonor.server.data.HelperRules
+import com.jadbarakat.blooddonor.server.data.RequesterOutcome
 import com.jadbarakat.blooddonor.server.data.Pledge
 import com.jadbarakat.blooddonor.server.data.PledgeRepository
 import com.jadbarakat.blooddonor.server.data.PledgeStatus
@@ -28,6 +32,7 @@ import com.jadbarakat.blooddonor.server.data.UserRepository
 import com.jadbarakat.blooddonor.server.data.emailTaken
 import com.jadbarakat.blooddonor.server.data.phoneTaken
 import java.time.Clock
+import java.time.Duration
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
@@ -260,6 +265,9 @@ class InMemoryPledgeRepository(
     private val requests: InMemoryBloodRequestRepository,
 ) : PledgeRepository {
     val rows = mutableListOf<Pledge>()
+
+    /** reminder_sent_at, by pledge id. */
+    val remindersSent = mutableMapOf<Long, Instant>()
     private var nextId = 1L
 
     override suspend fun commit(requestId: Long, donorId: Long, now: Instant, maxCommitted: Int): CommitResult {
@@ -275,26 +283,33 @@ class InMemoryPledgeRepository(
         }
         if (active >= maxCommitted) return CommitResult.LimitReached
         rows.remove(existing)
+        existing?.let { remindersSent.remove(it.id) }
         val pledge = Pledge(existing?.id ?: nextId++, requestId, donorId, PledgeStatus.COMMITTED, now)
         rows += pledge
         return CommitResult.Committed(pledge, isNew = true)
     }
 
     override suspend fun withdraw(requestId: Long, donorId: Long, now: Instant): Boolean =
-        setStatus(requestId, donorId, PledgeStatus.WITHDRAWN) != null
+        find(requestId, donorId)?.requesterOutcome == null && setStatus(requestId, donorId, PledgeStatus.WITHDRAWN) != null
 
     override suspend fun find(requestId: Long, donorId: Long) =
         rows.firstOrNull { it.requestId == requestId && it.donorId == donorId }
 
     override suspend fun helpers(requestId: Long): List<Helper> =
-        rows.filter { it.requestId == requestId && it.status in HELPING }
+        rows.filter { it.requestId == requestId && it.status != PledgeStatus.WITHDRAWN }
             .sortedWith(compareBy<Pledge> { it.committedAt }.thenBy { it.id })
             .map { pledge ->
                 val user = users.findById(pledge.donorId)!!
-                Helper(user.id, user.fullName, user.bloodType, user.phone, pledge.status, pledge.committedAt)
+                Helper(pledge.id, user.id, user.fullName, user.bloodType, user.phone, pledge.status, pledge.committedAt, pledge.requesterOutcome)
             }
 
-    override suspend fun helperCount(requestId: Long) = rows.count { it.requestId == requestId && it.status in HELPING }
+    override suspend fun helperCount(requestId: Long, now: Instant, arrivalWindow: Duration): Int {
+        val neededBy = requests.rows[requestId]?.neededBy ?: return 0
+        return rows.count {
+            it.requestId == requestId &&
+                HelperRules.counts(it.status, it.requesterOutcome, it.committedAt, neededBy, now, arrivalWindow)
+        }
+    }
 
     override suspend fun committedDonorIds(requestId: Long) =
         rows.filter { it.requestId == requestId && it.status == PledgeStatus.COMMITTED }.map { it.donorId }
@@ -304,12 +319,46 @@ class InMemoryPledgeRepository(
 
     override suspend fun confirmDonation(requestId: Long, donorId: Long, donated: Boolean, today: LocalDate, now: Instant): Pledge? {
         val pledge = setStatus(requestId, donorId, if (donated) PledgeStatus.DONATED else PledgeStatus.NOT_DONATED) ?: return null
-        if (donated) {
-            val entry = users.rows.entries.first { it.value.id == donorId }
-            val last = entry.value.lastDonationDate
-            if (last == null || last.isBefore(today)) entry.setValue(entry.value.copy(lastDonationDate = today))
-        }
+        if (donated) updateLastDonation(donorId, today)
         return pledge
+    }
+
+    override suspend fun confirmHelper(requestId: Long, pledgeId: Long, outcome: String, today: LocalDate, now: Instant): HelperConfirmResult {
+        val index = rows.indexOfFirst { it.id == pledgeId && it.requestId == requestId }
+        if (index < 0) return HelperConfirmResult.NotFound
+        val pledge = rows[index]
+        if (pledge.requesterOutcome != null) return HelperConfirmResult.AlreadyConfirmed
+        if (pledge.status == PledgeStatus.WITHDRAWN) return HelperConfirmResult.Withdrawn
+        val donated = outcome == RequesterOutcome.DONATED
+        val updated = pledge.copy(
+            status = if (donated && pledge.status == PledgeStatus.COMMITTED) PledgeStatus.DONATED else pledge.status,
+            requesterOutcome = outcome,
+            requesterConfirmedAt = now,
+            confirmedDonation = donated,
+        )
+        rows[index] = updated
+        if (donated) updateLastDonation(pledge.donorId, today)
+        return HelperConfirmResult.Confirmed(updated)
+    }
+
+    override suspend fun claimDueReminders(now: Instant, arrivalWindow: Duration): List<HelperReminder> =
+        rows.mapNotNull { pledge ->
+            val request = requests.rows[pledge.requestId] ?: return@mapNotNull null
+            val due = pledge.id !in remindersSent && pledge.requesterOutcome == null &&
+                pledge.status in HelperRules.WAITING && request.status != RequestStatus.CANCELLED &&
+                !HelperRules.arrivalEnds(pledge.committedAt, request.neededBy, arrivalWindow).isAfter(now)
+            if (!due) return@mapNotNull null
+            remindersSent[pledge.id] = now
+            HelperReminder(pledge.id, pledge.requestId, request.requesterId, users.findById(pledge.donorId)!!.fullName)
+        }
+
+    override suspend fun noShowCount(donorId: Long) =
+        rows.count { it.donorId == donorId && it.requesterOutcome == RequesterOutcome.NO_SHOW }
+
+    private fun updateLastDonation(donorId: Long, today: LocalDate) {
+        val entry = users.rows.entries.first { it.value.id == donorId }
+        val last = entry.value.lastDonationDate
+        if (last == null || last.isBefore(today)) entry.setValue(entry.value.copy(lastDonationDate = today))
     }
 
     /** Committed -> [status]; null if there was no committed pledge. */
@@ -317,9 +366,5 @@ class InMemoryPledgeRepository(
         val index = rows.indexOfFirst { it.requestId == requestId && it.donorId == donorId && it.status == PledgeStatus.COMMITTED }
         if (index < 0) return null
         return rows[index].copy(status = status).also { rows[index] = it }
-    }
-
-    private companion object {
-        val HELPING = setOf(PledgeStatus.COMMITTED, PledgeStatus.DONATED)
     }
 }

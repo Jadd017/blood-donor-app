@@ -11,9 +11,12 @@ import com.jadbarakat.blooddonor.server.InMemoryUserRepository
 import com.jadbarakat.blooddonor.server.MutableClock
 import com.jadbarakat.blooddonor.server.SentNotification
 import com.jadbarakat.blooddonor.server.data.BloodRequest
+import com.jadbarakat.blooddonor.server.data.CommitResult
+import com.jadbarakat.blooddonor.server.data.PledgeStatus
 import com.jadbarakat.blooddonor.server.data.Hospital
 import com.jadbarakat.blooddonor.server.data.NewBloodRequest
 import com.jadbarakat.blooddonor.server.data.ProfileInput
+import com.jadbarakat.blooddonor.server.data.RequesterOutcome
 import com.jadbarakat.blooddonor.server.data.RequestStatus
 import kotlinx.coroutines.runBlocking
 import java.time.Duration
@@ -37,9 +40,21 @@ class WaveServiceTest {
     private var helpers = 0
 
     private fun service(config: MatchingConfig = MatchingConfig()) =
-        WaveService(requests, matching, tokens, push, { helpers }, config, clock)
+        WaveService(requests, matching, tokens, push, { _, _ -> helpers }, config, clock)
 
     private val requesterId = 1L
+    private val window = Duration.ofHours(3)
+
+    /** A service whose helper count comes from real (in-memory) pledges. */
+    private fun withPledges(config: MatchingConfig = MatchingConfig()): Pair<WaveService, InMemoryPledgeRepository> {
+        val users = InMemoryUserRepository()
+        listOf(2L, 3L, 4L, 5L).forEach { id ->
+            runBlocking { users.upsert("uid-$id", "$id@example.com", ProfileInput("Donor $id", "+9617100000$id", "O-", "male", 1, null, true)) }
+        }
+        val pledges = InMemoryPledgeRepository(users, requests)
+        val waves = WaveService(requests, matching, tokens, push, { id, now -> pledges.helperCount(id, now, window) }, config, clock)
+        return waves to pledges
+    }
 
     /** A compatible O- donor [km] from the hospital, with one device token "t<id>". */
     private fun donor(id: Long, km: Double, bloodType: String = "O-") {
@@ -195,7 +210,7 @@ class WaveServiceTest {
         val request = createRequest(units = 2)
         val waves = service()
         waves.runDueWaveFor(request.id)
-        helpers = 2
+        helpers = 3 // 2 units + the buffer of 1
         advance(30)
         assertTrue(waves.runDueWaves().isEmpty())
         assertEquals(1, requests.rows.getValue(request.id).wavesSent, "the wave is not used up")
@@ -203,9 +218,7 @@ class WaveServiceTest {
 
     @Test
     fun `committed donors stop the waves and a withdrawal resumes them`() = runBlocking {
-        val users = InMemoryUserRepository()
-        val pledges = InMemoryPledgeRepository(users, requests)
-        val waves = WaveService(requests, matching, tokens, push, { pledges.helperCount(it) }, MatchingConfig(), clock)
+        val (waves, pledges) = withPledges(MatchingConfig(helperBuffer = 0))
         donor(2, km = 5.0)
         donor(3, km = 25.0)
         donor(4, km = 50.0)
@@ -227,16 +240,90 @@ class WaveServiceTest {
     }
 
     @Test
-    fun `a donated pledge still counts as a helper`() = runBlocking {
-        val users = InMemoryUserRepository()
-        val pledges = InMemoryPledgeRepository(users, requests)
-        val donorId = users.upsert("uid-d", "d@example.com", ProfileInput("D", "+96171000000", "O-", "male", 1, null, true)).id
+    fun `waves stop at units needed plus the buffer`() = runBlocking {
+        donor(2, km = 25.0)
+        donor(3, km = 50.0)
         val request = createRequest(units = 1)
-        pledges.commit(request.id, donorId, clock.instant(), 2)
-        pledges.confirmDonation(request.id, donorId, donated = true, today = LocalDate.of(2026, 6, 15), now = clock.instant())
-        assertEquals(1, pledges.helperCount(request.id))
-        pledges.commit(request.id, 99, clock.instant(), 2)
-        assertEquals(2, pledges.helperCount(request.id))
+        val waves = service() // buffer 1
+        waves.runDueWaveFor(request.id)
+
+        helpers = 1
+        advance(30)
+        assertEquals(2, waves.runDueWaves().single().wave, "1 helper for 1 unit: still looking for the backup donor")
+
+        helpers = 2
+        advance(30)
+        assertTrue(waves.runDueWaves().isEmpty(), "1 unit + 1 buffer reached")
+        assertEquals(2, requests.rows.getValue(request.id).wavesSent)
+    }
+
+    @Test
+    fun `a helper stops counting when the arrival window ends, and the waves resume`() = runBlocking {
+        val (waves, pledges) = withPledges()
+        donor(2, km = 5.0)
+        donor(3, km = 6.0)
+        donor(4, km = 140.0)
+        val request = createRequest(units = 1)
+        waves.runDueWaveFor(request.id)
+        pledges.commit(request.id, 2, clock.instant(), 2)
+        pledges.commit(request.id, 3, clock.instant(), 2)
+
+        advance(120)
+        assertTrue(waves.runDueWaves().isEmpty(), "2 helpers within their window: waves held")
+        assertEquals(2, pledges.helperCount(request.id, clock.instant(), window))
+
+        advance(59)
+        assertTrue(waves.runDueWaves().isEmpty())
+        advance(1) // 3 hours after committing
+        assertEquals(0, pledges.helperCount(request.id, clock.instant(), window))
+        assertEquals(4, waves.runDueWaves().single().wave, "the latest due wave goes out, no status change needed")
+        assertTrue(4L in notified(request.id))
+        assertEquals(PledgeStatus.COMMITTED, pledges.find(request.id, 2)!!.status)
+    }
+
+    @Test
+    fun `the arrival window ends at the deadline if that comes first`() = runBlocking {
+        val (_, pledges) = withPledges()
+        val request = createRequest(units = 1, hours = 2)
+        pledges.commit(request.id, 2, clock.instant(), 2)
+        advance(119)
+        assertEquals(1, pledges.helperCount(request.id, clock.instant(), window))
+        advance(1)
+        assertEquals(0, pledges.helperCount(request.id, clock.instant(), window))
+    }
+
+    @Test
+    fun `a no-show stops counting right away and the waves resume`() = runBlocking {
+        val (waves, pledges) = withPledges()
+        donor(2, km = 5.0)
+        donor(3, km = 6.0)
+        donor(4, km = 25.0)
+        val request = createRequest(units = 1)
+        waves.runDueWaveFor(request.id)
+        pledges.commit(request.id, 2, clock.instant(), 2)
+        val second = (pledges.commit(request.id, 3, clock.instant(), 2) as CommitResult.Committed).pledge
+        advance(30)
+        assertTrue(waves.runDueWaves().isEmpty())
+
+        pledges.confirmHelper(request.id, second.id, RequesterOutcome.NO_SHOW, LocalDate.of(2026, 6, 15), clock.instant())
+        assertEquals(1, pledges.helperCount(request.id, clock.instant(), window))
+        assertEquals(2, waves.runDueWaveFor(request.id)!!.wave)
+        assertTrue(4L in notified(request.id))
+        assertEquals(1, pledges.noShowCount(3))
+        assertEquals(0, pledges.noShowCount(2))
+    }
+
+    @Test
+    fun `a requester-confirmed donation counts after the window, a self-reported one doesn't`() = runBlocking {
+        val (_, pledges) = withPledges()
+        val request = createRequest(units = 2)
+        val confirmed = (pledges.commit(request.id, 2, clock.instant(), 2) as CommitResult.Committed).pledge
+        pledges.commit(request.id, 3, clock.instant(), 2)
+        val today = LocalDate.of(2026, 6, 15)
+        pledges.confirmHelper(request.id, confirmed.id, RequesterOutcome.DONATED, today, clock.instant())
+        advance(180)
+        pledges.confirmDonation(request.id, 3, donated = true, today = today, now = clock.instant())
+        assertEquals(1, pledges.helperCount(request.id, clock.instant(), window), "only the requester-confirmed one")
     }
 
     @Test

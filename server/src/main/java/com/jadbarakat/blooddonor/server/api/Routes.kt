@@ -6,11 +6,14 @@ import com.jadbarakat.blooddonor.server.data.BloodRequest
 import com.jadbarakat.blooddonor.server.data.BloodRequestRepository
 import com.jadbarakat.blooddonor.server.data.CommitResult
 import com.jadbarakat.blooddonor.server.data.DeviceTokenRepository
+import com.jadbarakat.blooddonor.server.data.HelperConfirmResult
+import com.jadbarakat.blooddonor.server.data.HelperRules
 import com.jadbarakat.blooddonor.server.data.HospitalRepository
 import com.jadbarakat.blooddonor.server.data.Pledge
 import com.jadbarakat.blooddonor.server.data.PledgeRepository
 import com.jadbarakat.blooddonor.server.data.PledgeStatus
 import com.jadbarakat.blooddonor.server.data.RequestStatus
+import com.jadbarakat.blooddonor.server.data.RequesterOutcome
 import com.jadbarakat.blooddonor.server.data.UserProfile
 import com.jadbarakat.blooddonor.server.data.UserRepository
 import com.jadbarakat.blooddonor.server.matching.Compatibility
@@ -30,17 +33,14 @@ import io.ktor.server.routing.post
 import io.ktor.server.routing.put
 import io.ktor.server.routing.route
 import java.time.Clock
-import java.time.Duration
 import java.time.Instant
 import java.time.LocalDate
+import kotlin.time.toJavaDuration
 
 const val FIREBASE_AUTH = "firebase"
 
 /** A donor can be committed to at most this many open requests at a time. */
 const val MAX_COMMITTED_PLEDGES = 2
-
-/** A committed donor is asked "Did you donate?" once the request closes, or this long after committing. */
-val DONATION_CONFIRM_AFTER: Duration = Duration.ofHours(3)
 
 /** Told about every new request, e.g. to start notifying donors. Must not block. */
 fun interface RequestCreatedListener {
@@ -59,10 +59,29 @@ fun Route.apiV1(
     config: MatchingConfig,
     clock: Clock,
 ) {
-    /** The owner's view, with the helpers' contact details. */
+    val arrivalWindow = config.arrivalWindow.toJavaDuration()
+
+    /** The owner's view, with the helpers' contact details and who still counts as helping. */
     suspend fun ownerView(request: BloodRequest): BloodRequestResponse {
-        val helpers = pledges.helpers(request.id)
-        return request.toResponse().copy(helpers = helpers.map { it.toResponse() }, committedCount = helpers.size)
+        val now = clock.instant()
+        val helpers = pledges.helpers(request.id).map { helper ->
+            val state = when {
+                helper.requesterOutcome == RequesterOutcome.DONATED -> HelperState.DONATED
+                helper.requesterOutcome == RequesterOutcome.NO_SHOW -> HelperState.NO_SHOW
+                HelperRules.counts(helper.status, null, helper.committedAt, request.neededBy, now, arrivalWindow) ->
+                    HelperState.ON_THE_WAY
+                else -> HelperState.AWAITING_CONFIRMATION
+            }
+            helper.toResponse(HelperRules.arrivalEnds(helper.committedAt, request.neededBy, arrivalWindow), state)
+        }
+        val donated = helpers.count { it.state == HelperState.DONATED }
+        val onTheWay = helpers.count { it.state == HelperState.ON_THE_WAY }
+        return request.toResponse().copy(
+            helpers = helpers,
+            committedCount = donated + onTheWay,
+            confirmedDonatedCount = donated,
+            onTheWayCount = onTheWay,
+        )
     }
 
     /** What a donor sees about their own pledge; null once withdrawn. */
@@ -72,7 +91,7 @@ fun Route.apiV1(
         return PledgeResponse(
             status = pledge.status,
             committedAt = pledge.committedAt.toString(),
-            canConfirmDonation = canConfirmDonation(request, pledge, clock.instant()),
+            canConfirmDonation = canConfirmDonation(request, pledge, clock.instant(), arrivalWindow),
             requesterFirstName = users.findById(request.requesterId)?.fullName?.firstName().orEmpty(),
             hospitalName = request.hospitalName,
             areaName = request.areaName,
@@ -186,6 +205,26 @@ fun Route.apiV1(
                     call.closeOwnedRequest(RequestStatus.CANCELLED)
                 }
 
+                // The requester confirms a helper after the blood bank tells them, open or closed.
+                post("/{id}/helpers/{pledgeId}/confirm") {
+                    val request = call.ownedRequest(users, requests).effective(clock.instant())
+                    val pledgeId = call.parameters["pledgeId"]?.toLongOrNull() ?: throw helperNotFound()
+                    val outcome = call.receive<HelperConfirmBody>().outcome
+                    if (outcome !in RequesterOutcome.ALL) throw badRequest("invalid_outcome", "outcome must be donated or no_show")
+                    when (pledges.confirmHelper(request.id, pledgeId, outcome, LocalDate.now(clock), clock.instant())) {
+                        is HelperConfirmResult.Confirmed ->
+                            if (outcome == RequesterOutcome.NO_SHOW) onRequestEvent.onEvent(RequestEvent.HelperNoShow(request.id))
+                        HelperConfirmResult.NotFound -> throw helperNotFound()
+                        HelperConfirmResult.Withdrawn -> throw ApiException(
+                            HttpStatusCode.Conflict, "helper_withdrew", "This donor withdrew",
+                        )
+                        HelperConfirmResult.AlreadyConfirmed -> throw ApiException(
+                            HttpStatusCode.Conflict, "helper_already_confirmed", "You already confirmed this donor",
+                        )
+                    }
+                    call.respond(ownerView(request))
+                }
+
                 route("/{id}/help") {
                     // "I can help": the donor commits to go to the hospital.
                     post {
@@ -220,23 +259,26 @@ fun Route.apiV1(
                         val profile = call.requireProfile(users)
                         val request = call.requestForDonor(profile, requests, clock)
                         if (request.status != RequestStatus.OPEN) throw requestNotOpen()
+                        if (pledges.find(request.id, profile.id)?.requesterOutcome != null) {
+                            throw ApiException(HttpStatusCode.Conflict, "pledge_closed", "The requester already confirmed your pledge")
+                        }
                         if (!pledges.withdraw(request.id, profile.id, clock.instant())) throw noPledge()
                         onRequestEvent.onEvent(RequestEvent.DonorWithdrew(request.id))
                         call.respond(HttpStatusCode.NoContent)
                     }
                 }
 
-                // "Did you donate?"
+                // "Did you donate?" Only updates the donor's own last donation date, never confirmed_donation.
                 post("/{id}/donation") {
                     val profile = call.requireProfile(users)
                     val request = call.requestForDonor(profile, requests, clock)
                     val donated = call.receive<DonationBody>().donated
                     val pledge = pledges.find(request.id, profile.id)
                     if (pledge == null || pledge.status != PledgeStatus.COMMITTED) throw noPledge()
-                    if (!canConfirmDonation(request, pledge, clock.instant())) {
+                    if (!canConfirmDonation(request, pledge, clock.instant(), arrivalWindow)) {
                         throw ApiException(
                             HttpStatusCode.Conflict, "too_early",
-                            "You can answer once the request closes or 3 hours after you committed",
+                            "You can answer once the request closes or your arrival window ends",
                         )
                     }
                     pledges.confirmDonation(request.id, profile.id, donated, LocalDate.now(clock), clock.instant())
@@ -276,10 +318,10 @@ private suspend fun RoutingCall.requestForDonor(profile: UserProfile, requests: 
     return request
 }
 
-/** True once a committed donor may answer "Did you donate?". */
-fun canConfirmDonation(request: BloodRequest, pledge: Pledge, now: Instant): Boolean =
+/** True once a committed donor may answer "Did you donate?": the request closed or the arrival window ended. */
+fun canConfirmDonation(request: BloodRequest, pledge: Pledge, now: Instant, arrivalWindow: java.time.Duration): Boolean =
     pledge.status == PledgeStatus.COMMITTED &&
-        (request.effective(now).status != RequestStatus.OPEN || !now.isBefore(pledge.committedAt.plus(DONATION_CONFIRM_AFTER)))
+        (request.effective(now).status != RequestStatus.OPEN || !now.isBefore(pledge.committedAt.plus(arrivalWindow)))
 
 /** The first word of a full name: the only part of the requester's name a donor sees. */
 private fun String.firstName(): String = trim().split(Regex("\\s+")).first()
@@ -287,6 +329,8 @@ private fun String.firstName(): String = trim().split(Regex("\\s+")).first()
 private fun requestNotFound() = ApiException(HttpStatusCode.NotFound, "request_not_found", "No such request")
 
 private fun requestNotOpen() = ApiException(HttpStatusCode.Conflict, "request_not_open", "Only open requests can be changed")
+
+private fun helperNotFound() = ApiException(HttpStatusCode.NotFound, "helper_not_found", "No such helper for this request")
 
 private fun noPledge() = ApiException(HttpStatusCode.Conflict, "no_pledge", "You haven't committed to this request")
 

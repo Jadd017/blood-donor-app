@@ -3,6 +3,7 @@ package com.jadbarakat.blooddonor.server.data
 import com.jadbarakat.blooddonor.server.api.ApiException
 import com.jadbarakat.blooddonor.server.matching.DonorCandidate
 import io.ktor.http.HttpStatusCode
+import java.time.Duration
 import java.time.Instant
 import java.time.LocalDate
 
@@ -101,7 +102,10 @@ interface MatchingRepository {
     suspend fun recordNotifications(requestId: Long, userIds: Collection<Long>, wave: Int, now: Instant)
 }
 
-/** "I can help" pledges. Helpers of a request are its committed and donated pledges. */
+/**
+ * "I can help" pledges. Helpers of a request are its pledges that weren't withdrawn; which of them
+ * count towards units_needed is decided by [HelperRules].
+ */
 interface PledgeRepository {
     /**
      * Commits [donorId] to [requestId] at [now]. Atomic per donor, so parallel calls can't exceed
@@ -109,16 +113,19 @@ interface PledgeRepository {
      */
     suspend fun commit(requestId: Long, donorId: Long, now: Instant, maxCommitted: Int): CommitResult
 
-    /** Committed -> withdrawn. False if the donor had no committed pledge for the request. */
+    /**
+     * Committed -> withdrawn. False if the donor had no committed pledge for the request, or the
+     * requester already confirmed it.
+     */
     suspend fun withdraw(requestId: Long, donorId: Long, now: Instant): Boolean
 
     suspend fun find(requestId: Long, donorId: Long): Pledge?
 
-    /** Committed and donated pledges, earliest commit first. */
+    /** Pledges that weren't withdrawn, earliest commit first. */
     suspend fun helpers(requestId: Long): List<Helper>
 
-    /** Committed + donated pledges. */
-    suspend fun helperCount(requestId: Long): Int
+    /** Pledges that count as helpers at [now] (see [HelperRules]). */
+    suspend fun helperCount(requestId: Long, now: Instant, arrivalWindow: Duration): Int
 
     suspend fun committedDonorIds(requestId: Long): List<Long>
 
@@ -126,10 +133,27 @@ interface PledgeRepository {
     suspend fun committedRequestIds(donorId: Long): Set<Long>
 
     /**
-     * Committed -> donated or not_donated. If [donated], also sets the donor's last donation date
-     * to [today] (unless it is already later). Null if the donor had no committed pledge.
+     * The donor's own "Did you donate?": committed -> donated or not_donated. If [donated], also sets
+     * the donor's last donation date to [today] (unless it is already later). Never sets
+     * confirmed_donation. Null if the donor had no committed pledge.
      */
     suspend fun confirmDonation(requestId: Long, donorId: Long, donated: Boolean, today: LocalDate, now: Instant): Pledge?
+
+    /**
+     * The requester's confirmation of pledge [pledgeId] of [requestId], once per pledge. [outcome] is a
+     * [RequesterOutcome]. "donated" also sets confirmed_donation, the donor's last donation date
+     * (unless already later) and, if the donor hasn't answered yet, the pledge status to donated.
+     */
+    suspend fun confirmHelper(requestId: Long, pledgeId: Long, outcome: String, today: LocalDate, now: Instant): HelperConfirmResult
+
+    /**
+     * Marks every pledge whose arrival window ended by [now] without a requester confirmation (and
+     * whose request wasn't cancelled) as reminded, and returns them. Each pledge is returned once.
+     */
+    suspend fun claimDueReminders(now: Instant, arrivalWindow: Duration): List<HelperReminder>
+
+    /** How many times the requester said [donorId] didn't come. Not exposed yet (Phase 5). */
+    suspend fun noShowCount(donorId: Long): Int
 }
 
 fun phoneTaken() = ApiException(HttpStatusCode.Conflict, "phone_taken", "This phone number is already registered")

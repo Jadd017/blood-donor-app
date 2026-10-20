@@ -10,8 +10,9 @@ import java.time.Clock
 import java.time.Duration
 
 /**
- * Status notifications about a request: to the requester when a donor commits or withdraws, and
- * to committed donors when it closes. Payloads never contain the note or any phone number.
+ * Status notifications about a request: to the requester when a donor commits or withdraws, or
+ * when a helper's arrival window ends unconfirmed, and to committed donors when it closes.
+ * Payloads never contain the note or any phone number.
  */
 class RequestNotifier(
     private val requests: BloodRequestRepository,
@@ -19,17 +20,32 @@ class RequestNotifier(
     private val tokens: DeviceTokenRepository,
     private val push: PushSender,
     private val clock: Clock,
+    private val arrivalWindow: Duration = Duration.ofHours(3),
 ) {
     suspend fun handle(event: RequestEvent) {
         val request = requests.findById(event.requestId)?.effective(clock.instant()) ?: return
         when (event) {
             is RequestEvent.DonorCommitted -> send(listOf(request.requesterId), donorCommitted(request, event.donorBloodType))
             is RequestEvent.DonorWithdrew -> send(listOf(request.requesterId), donorWithdrew(request))
+            is RequestEvent.HelperNoShow -> Unit
             is RequestEvent.RequestClosed -> {
                 if (request.status == RequestStatus.OPEN) return
                 send(pledges.committedDonorIds(request.id), requestClosed(request))
             }
         }
+    }
+
+    /**
+     * "Did <first name> donate?" to the requester, once per pledge whose arrival window ended
+     * without a confirmation. Returns how many reminders were claimed.
+     */
+    suspend fun sendHelperReminders(): Int {
+        val due = pledges.claimDueReminders(clock.instant(), arrivalWindow)
+        for (reminder in due) {
+            val request = requests.findById(reminder.requestId) ?: continue
+            send(listOf(reminder.requesterId), confirmHelper(request, reminder.donorFullName))
+        }
+        return due.size
     }
 
     private suspend fun send(userIds: List<Long>, message: PushMessage) {
@@ -56,6 +72,12 @@ class RequestNotifier(
         request, "donor_withdrew", VIEW_REQUESTER,
         title = "A donor can no longer come",
         body = "Your request at ${request.hospitalName}",
+    )
+
+    fun confirmHelper(request: BloodRequest, donorFullName: String) = update(
+        request, "confirm_helper", VIEW_REQUESTER,
+        title = "Did ${donorFullName.trim().split(Regex("\\s+")).first()} donate?",
+        body = "Confirm in the app.",
     )
 
     fun requestClosed(request: BloodRequest) =
