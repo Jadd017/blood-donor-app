@@ -1,29 +1,22 @@
 package com.jadbarakat.blooddonor.requests
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.FilterChip
-import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -34,8 +27,9 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
@@ -48,9 +42,26 @@ import com.jadbarakat.blooddonor.data.Area
 import com.jadbarakat.blooddonor.data.BLOOD_TYPES
 import com.jadbarakat.blooddonor.data.Component
 import com.jadbarakat.blooddonor.data.Hospital
+import com.jadbarakat.blooddonor.ui.components.AppCard
+import com.jadbarakat.blooddonor.ui.components.AppScreen
+import com.jadbarakat.blooddonor.ui.components.AppTopBar
+import com.jadbarakat.blooddonor.ui.components.ChoiceGrid
+import com.jadbarakat.blooddonor.ui.components.ChoicePill
+import com.jadbarakat.blooddonor.ui.components.EmptyState
+import com.jadbarakat.blooddonor.ui.components.ErrorState
+import com.jadbarakat.blooddonor.ui.components.InfoRow
+import com.jadbarakat.blooddonor.ui.components.InlineMessage
+import com.jadbarakat.blooddonor.ui.components.LoadingState
+import com.jadbarakat.blooddonor.ui.components.PrimaryButton
+import com.jadbarakat.blooddonor.ui.components.SectionHeader
+import com.jadbarakat.blooddonor.ui.components.Stepper
+import com.jadbarakat.blooddonor.ui.components.Tone
+import com.jadbarakat.blooddonor.ui.components.appTextFieldColors
+import com.jadbarakat.blooddonor.ui.components.displayBloodType
 import com.jadbarakat.blooddonor.ui.resolve
+import com.jadbarakat.blooddonor.ui.theme.Dimens
+import com.jadbarakat.blooddonor.ui.theme.extendedColors
 
-@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun CreateRequestScreen(
     uiState: RequestsUiState,
@@ -67,106 +78,112 @@ fun CreateRequestScreen(
     val enabled = !uiState.isSubmitting
     var showPicker by rememberSaveable { mutableStateOf(false) }
 
-    Column(
-        modifier = modifier
-            .fillMaxSize()
-            .imePadding()
-            .verticalScroll(rememberScrollState())
-            .padding(24.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
+    AppScreen(
+        modifier = modifier,
+        topBar = { AppTopBar(title = stringResource(R.string.request_create_title), onBack = onBack, backEnabled = enabled) },
     ) {
-        Text(stringResource(R.string.request_create_title), style = MaterialTheme.typography.headlineSmall)
-
         // Hospital
-        SectionLabel(stringResource(R.string.request_hospital_label))
+        SectionHeader(stringResource(R.string.request_hospital_label))
         val hospital = uiState.hospitalById(form.hospitalId)
-        OutlinedButton(
+        val hospitalArea = hospital?.let { h -> areas.firstOrNull { it.id == h.areaId } }
+        AppCard(
             onClick = { showPicker = true },
             enabled = enabled,
-            modifier = Modifier.fillMaxWidth(),
+            contentPadding = 12.dp,
+            border = BorderStroke(
+                1.dp,
+                if (uiState.hospitalError != null) MaterialTheme.extendedColors.redText else MaterialTheme.colorScheme.outline,
+            ),
         ) {
-            Text(
-                text = hospital?.name ?: stringResource(R.string.request_hospital_choose),
-                modifier = Modifier.fillMaxWidth(),
+            InfoRow(
+                icon = R.drawable.ic_hospital,
+                title = hospital?.name ?: stringResource(R.string.request_hospital_choose),
+                subtitle = hospitalArea?.let { stringResource(R.string.profile_area_value, it.name, it.governorate) }
+                    ?: stringResource(R.string.request_hospital_hint),
+                iconContainer = MaterialTheme.colorScheme.primaryContainer,
+                iconTint = MaterialTheme.extendedColors.redText,
+                action = {
+                    Icon(
+                        painterResource(R.drawable.ic_chevron_right),
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                },
             )
         }
         FieldError(uiState.hospitalError?.resolve())
 
         // Patient blood type
-        SectionLabel(stringResource(R.string.request_blood_type_label))
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            BLOOD_TYPES.forEach { type ->
-                FilterChip(
-                    selected = form.bloodType == type,
-                    onClick = { onFormChange { it.copy(bloodType = type) } },
-                    label = { Text(type) },
-                    enabled = enabled,
-                )
-            }
-        }
+        SectionHeader(stringResource(R.string.request_blood_type_label))
+        ChoiceGrid(
+            options = BLOOD_TYPES,
+            columns = 4,
+            selected = form.bloodType,
+            onSelect = { type -> onFormChange { it.copy(bloodType = type) } },
+            label = { displayBloodType(it) },
+            enabled = enabled,
+            large = true,
+        )
         FieldError(uiState.bloodTypeError?.resolve())
 
         // Component
-        SectionLabel(stringResource(R.string.request_component_label))
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Component.ALL.forEach { component ->
-                FilterChip(
-                    selected = form.component == component,
-                    onClick = { onFormChange { it.copy(component = component) } },
-                    label = { Text(stringResource(componentLabel(component))) },
-                    enabled = enabled,
-                )
-            }
-        }
+        SectionHeader(stringResource(R.string.request_component_label))
+        ChoiceGrid(
+            options = Component.ALL,
+            columns = 2,
+            selected = form.component,
+            onSelect = { component -> onFormChange { it.copy(component = component) } },
+            label = { stringResource(componentLabel(it)) },
+            enabled = enabled,
+        )
         FieldError(uiState.componentError?.resolve())
 
         // Units
-        SectionLabel(stringResource(R.string.request_units_label))
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-            OutlinedButton(
-                onClick = { onFormChange { it.copy(units = it.units - 1) } },
-                enabled = enabled && form.units > UNITS_RANGE.first,
-            ) { Text(stringResource(R.string.request_units_minus)) }
-            Text(
-                text = form.units.toString(),
-                style = MaterialTheme.typography.headlineSmall,
-                textAlign = TextAlign.Center,
-                modifier = Modifier.widthIn(min = 32.dp),
-            )
-            OutlinedButton(
-                onClick = { onFormChange { it.copy(units = it.units + 1) } },
-                enabled = enabled && form.units < UNITS_RANGE.last,
-            ) { Text(stringResource(R.string.request_units_plus)) }
-        }
+        SectionHeader(stringResource(R.string.request_units_label))
+        Stepper(
+            value = form.units,
+            valueLabel = pluralStringResource(R.plurals.units_count, form.units, form.units),
+            onDecrement = { onFormChange { it.copy(units = it.units - 1) } },
+            onIncrement = { onFormChange { it.copy(units = it.units + 1) } },
+            canDecrement = enabled && form.units > UNITS_RANGE.first,
+            canIncrement = enabled && form.units < UNITS_RANGE.last,
+            decrementLabel = stringResource(R.string.request_units_less),
+            incrementLabel = stringResource(R.string.request_units_more),
+        )
 
         // Deadline
-        SectionLabel(stringResource(R.string.request_deadline_label))
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        SectionHeader(stringResource(R.string.request_deadline_label))
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.fillMaxWidth().selectableGroup(),
+        ) {
             DEADLINE_HOURS.forEach { hours ->
-                FilterChip(
+                ChoicePill(
+                    text = stringResource(R.string.request_deadline_hours, hours),
                     selected = form.hours == hours,
                     onClick = { onFormChange { it.copy(hours = hours) } },
-                    label = { Text(stringResource(R.string.request_deadline_hours, hours)) },
                     enabled = enabled,
+                    modifier = Modifier.weight(1f),
                 )
             }
         }
 
         // Note
+        SectionHeader(stringResource(R.string.request_note_label))
         OutlinedTextField(
             value = form.note,
             onValueChange = { value -> onFormChange { it.copy(note = value) } },
-            label = { Text(stringResource(R.string.request_note_label)) },
             placeholder = { Text(stringResource(R.string.request_note_placeholder)) },
             supportingText = {
-                Text(
-                    uiState.noteError?.resolve()
-                        ?: stringResource(R.string.request_note_counter, form.note.length, MAX_NOTE_LENGTH)
-                )
+                Row(Modifier.fillMaxWidth()) {
+                    Text(uiState.noteError?.resolve().orEmpty(), modifier = Modifier.weight(1f))
+                    Text(stringResource(R.string.request_note_counter, form.note.length, MAX_NOTE_LENGTH))
+                }
             },
             isError = uiState.noteError != null,
             enabled = enabled,
-            minLines = 2,
+            minLines = 3,
+            colors = appTextFieldColors(),
             keyboardOptions = KeyboardOptions(
                 capitalization = KeyboardCapitalization.Sentences,
                 imeAction = ImeAction.Default,
@@ -174,20 +191,22 @@ fun CreateRequestScreen(
             modifier = Modifier.fillMaxWidth(),
         )
 
-        uiState.submitError?.let {
-            Text(it.resolve(), color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium)
-        }
+        uiState.submitError?.let { InlineMessage(it.resolve(), Tone.ERROR) }
 
-        Button(onClick = onSubmit, enabled = enabled, modifier = Modifier.fillMaxWidth()) {
-            if (uiState.isSubmitting) {
-                CircularProgressIndicator(strokeWidth = 2.dp, modifier = Modifier.padding(2.dp))
-            } else {
-                Text(stringResource(R.string.request_button_post))
-            }
-        }
-        TextButton(onClick = onBack, enabled = enabled, modifier = Modifier.fillMaxWidth()) {
-            Text(stringResource(R.string.request_button_back))
-        }
+        PrimaryButton(
+            text = stringResource(R.string.request_button_post),
+            onClick = onSubmit,
+            loading = uiState.isSubmitting,
+            icon = R.drawable.ic_drop,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Text(
+            stringResource(R.string.request_confirm_message),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.extendedColors.tertiaryText,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.fillMaxWidth(),
+        )
     }
 
     if (showPicker) {
@@ -246,70 +265,56 @@ private fun HospitalPickerDialog(
     }
 
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        Surface(modifier = Modifier.fillMaxSize()) {
-            Column(Modifier.fillMaxSize().imePadding()) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.fillMaxWidth().padding(start = 24.dp, end = 8.dp, top = 16.dp),
-                ) {
-                    Text(
-                        stringResource(R.string.request_hospital_picker_title),
-                        style = MaterialTheme.typography.titleLarge,
-                        modifier = Modifier.weight(1f),
-                    )
-                    TextButton(onClick = onDismiss) { Text(stringResource(R.string.request_hospital_picker_close)) }
-                }
+        Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+            Column(Modifier.fillMaxSize().systemBarsPadding().imePadding()) {
+                AppTopBar(
+                    title = stringResource(R.string.request_hospital_picker_title),
+                    onBack = onDismiss,
+                    backIcon = R.drawable.ic_close,
+                )
                 OutlinedTextField(
                     value = query,
                     onValueChange = { query = it },
-                    label = { Text(stringResource(R.string.request_hospital_search)) },
+                    placeholder = { Text(stringResource(R.string.request_hospital_search)) },
+                    leadingIcon = { Icon(painterResource(R.drawable.ic_search), contentDescription = null) },
                     singleLine = true,
+                    colors = appTextFieldColors(),
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 8.dp),
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = Dimens.ScreenPadding).padding(bottom = 8.dp),
                 )
                 when {
-                    isLoading -> Column(
-                        Modifier.weight(1f).fillMaxWidth(),
-                        verticalArrangement = Arrangement.Center,
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                    ) { CircularProgressIndicator() }
+                    isLoading -> LoadingState(Modifier.weight(1f))
 
                     error != null -> Column(
-                        Modifier.weight(1f).fillMaxWidth().padding(24.dp),
-                        verticalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterVertically),
-                        horizontalAlignment = Alignment.CenterHorizontally,
+                        Modifier.weight(1f).fillMaxWidth().padding(Dimens.ScreenPadding),
+                        verticalArrangement = Arrangement.Center,
                     ) {
-                        Text(error, textAlign = TextAlign.Center)
-                        Button(onClick = onRetry) { Text(stringResource(R.string.button_retry)) }
+                        ErrorState(message = error, onRetry = onRetry)
                     }
 
-                    groups.isEmpty() -> Text(
-                        stringResource(R.string.request_hospital_no_results),
-                        modifier = Modifier.weight(1f).fillMaxWidth().padding(24.dp),
-                        textAlign = TextAlign.Center,
-                    )
+                    groups.isEmpty() -> Column(Modifier.weight(1f).padding(Dimens.ScreenPadding)) {
+                        EmptyState(icon = R.drawable.ic_search, title = stringResource(R.string.request_hospital_no_results))
+                    }
 
                     else -> LazyColumn(Modifier.weight(1f)) {
                         groups.forEach { (area, areaHospitals) ->
                             stickyHeader(key = "area-${area.id}") {
-                                Surface(color = MaterialTheme.colorScheme.surfaceVariant, modifier = Modifier.fillMaxWidth()) {
+                                Surface(color = MaterialTheme.colorScheme.background, modifier = Modifier.fillMaxWidth()) {
                                     Text(
                                         stringResource(R.string.profile_area_value, area.name, area.governorate),
-                                        style = MaterialTheme.typography.labelLarge,
-                                        modifier = Modifier.padding(horizontal = 24.dp, vertical = 6.dp),
+                                        style = MaterialTheme.typography.labelMedium,
+                                        color = MaterialTheme.extendedColors.redText,
+                                        modifier = Modifier.padding(horizontal = Dimens.ScreenPadding, vertical = 8.dp),
                                     )
                                 }
                             }
                             items(areaHospitals, key = { it.id }) { hospital ->
-                                Text(
-                                    hospital.name,
-                                    style = MaterialTheme.typography.bodyLarge,
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .clickable { onSelected(hospital) }
-                                        .padding(horizontal = 24.dp, vertical = 14.dp),
+                                InfoRow(
+                                    icon = R.drawable.ic_hospital,
+                                    title = hospital.name,
+                                    onClick = { onSelected(hospital) },
+                                    modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
                                 )
-                                HorizontalDivider()
                             }
                         }
                     }
@@ -317,8 +322,8 @@ private fun HospitalPickerDialog(
                 Text(
                     stringResource(R.string.request_hospital_attribution),
                     style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 8.dp),
+                    color = MaterialTheme.extendedColors.tertiaryText,
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = Dimens.ScreenPadding, vertical = 8.dp),
                 )
             }
         }
@@ -326,13 +331,6 @@ private fun HospitalPickerDialog(
 }
 
 @Composable
-private fun SectionLabel(text: String) {
-    Text(text, style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(top = 4.dp))
-}
-
-@Composable
 private fun FieldError(text: String?) {
-    if (text != null) {
-        Text(text, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
-    }
+    if (text != null) InlineMessage(text, Tone.ERROR)
 }

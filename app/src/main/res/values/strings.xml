@@ -12,7 +12,6 @@
     <string name="auth_toggle_to_log_in">Already have an account? Log in</string>
     <string name="auth_toggle_to_sign_up">New here? Create an account</string>
     <string name="auth_forgot_password">Forgot password?</string>
-    <string name="auth_or">or</string>
     <string name="auth_continue_with_google">Continue with Google</string>
     <string name="auth_password_reset_sent">If an account exists for that email, a password reset link has been sent.</string>
 
@@ -115,7 +114,6 @@
     <string name="request_status_expired">Expired</string>
     <string name="request_time_left_hours">%1$d h %2$d min left</string>
     <string name="request_time_left_minutes">%1$d min left</string>
-    <string name="request_card_title">%1$s · %2$s · %3$d units</string>
 
     <!-- Create request -->
     <string name="request_create_title">Request blood</string>
@@ -124,8 +122,6 @@
     <string name="request_blood_type_label">Patient\'s blood type</string>
     <string name="request_component_label">Needed</string>
     <string name="request_units_label">Units</string>
-    <string name="request_units_minus">−</string>
-    <string name="request_units_plus">+</string>
     <string name="request_deadline_label">Needed within</string>
     <string name="request_deadline_hours">%1$d h</string>
     <string name="request_note_label">Note (optional)</string>
@@ -134,7 +130,6 @@
     <string name="request_button_post">Post request</string>
     <string name="request_button_back">Back</string>
     <string name="request_hospital_picker_title">Choose a hospital</string>
-    <string name="request_hospital_picker_close">Close</string>
     <string name="request_hospital_search">Search hospital or area</string>
     <string name="request_hospital_no_results">No hospitals match your search.</string>
     <string name="request_hospital_attribution">Hospital data © OpenStreetMap contributors</string>
@@ -152,24 +147,20 @@
     <string name="request_error_profile_required">Complete your profile before posting a request.</string>
 
     <!-- Request detail -->
-    <string name="request_detail_title">%1$s request</string>
     <string name="request_needed_by_label">Needed by</string>
     <string name="request_created_label">Posted</string>
     <string name="request_closed_label">Closed</string>
     <string name="request_matching_placeholder">Matching donors will be notified.</string>
-    <string name="request_progress">%1$d confirmed donated, %2$d on the way</string>
     <string name="request_helpers_title">Donors who offered to help</string>
     <string name="request_helper_call">Call</string>
     <string name="request_helpers_hint">Only you can see these phone numbers.</string>
     <string name="request_helpers_confirm_hint">Confirm after the blood bank tells you.</string>
-    <string name="request_helper_state_donated">Donated ✓</string>
-    <string name="request_helper_state_no_show">Didn\'t come ✗</string>
-    <string name="request_helper_state_on_the_way">On the way</string>
+    <string name="request_helper_state_no_show">Didn\'t come</string>
     <string name="request_helper_state_awaiting">Waiting for your confirmation</string>
     <string name="request_helper_says_donated">Says they donated</string>
     <string name="request_helper_says_not_donated">Says they didn\'t donate</string>
-    <string name="request_helper_button_donated">Donated ✓</string>
-    <string name="request_helper_button_no_show">Didn\'t come ✗</string>
+    <string name="request_helper_button_donated">Donated</string>
+    <string name="request_helper_button_no_show">Didn\'t come</string>
     <string name="request_helper_donated_confirm_title">Did %1$s donate?</string>
     <string name="request_helper_donated_confirm_message">Only confirm once the blood bank tells you %1$s donated. This can\'t be undone.</string>
     <string name="request_helper_no_show_confirm_title">%1$s didn\'t come?</string>
@@ -187,7 +178,6 @@
     <string name="home_for_me">Requests you can help with</string>
     <string name="donor_request_title">%1$s %2$s needed</string>
     <string name="donor_request_place">%1$s, %2$s</string>
-    <string name="donor_request_area_label">Area</string>
     <string name="donor_button_can_help">I can help</string>
     <string name="donor_help_confirm_title">Can you go now?</string>
     <string name="donor_help_confirm_message">Only commit if you can get to %1$s before %2$s. Your name and phone number will be shared with the person who posted this request.</string>
@@ -195,7 +185,6 @@
     <string name="donor_committed_title">%1$s is counting on you</string>
     <string name="donor_committed_title_no_name">Someone is counting on you</string>
     <string name="donor_committed_reminder">Go to the hospital\'s blood bank and mention this request.</string>
-    <string name="donor_button_open_maps">Open in Maps</string>
     <string name="donor_button_withdraw">I can\'t make it anymore</string>
     <string name="donor_withdraw_confirm_title">Can\'t make it?</string>
     <string name="donor_withdraw_confirm_message">The person who posted this request will be told, and other donors may be notified.</string>
@@ -206,7 +195,6 @@
     <string name="donor_donated_no">No</string>
     <string name="donor_donated_thanks">Thank you for donating! Your last donation date was updated.</string>
     <string name="donor_not_donated_thanks">Thanks for letting us know.</string>
-    <string name="donor_badge_helping">You\'re helping</string>
     <string name="donor_maps_unavailable">No maps app found.</string>
     <string name="donor_error_own_request">This is your own request.</string>
     <string name="donor_error_not_eligible">Your blood type can\'t be used for this request.</string>
@@ -293,4 +281,61 @@
     <string name="settings_delete_confirm_message">This can\'t be undone.</string>
     <string name="settings_delete_confirm_type">Type %1$s to confirm.</string>
     <string name="settings_delete_confirm_button">Delete forever</string>
+
+    <!-- Design: welcome -->
+    <string name="welcome_headline">Blood when it\'s needed, from people nearby.</string>
+    <string name="welcome_body">Post an urgent request and we alert compatible donors near the hospital. Only them.</string>
+    <string name="welcome_continue_email">Continue with email</string>
+    <string name="welcome_privacy">Your phone number stays private until you choose to help.</string>
+
+    <!-- Design: chips, progress, menus -->
+    <string name="chip_on_the_way">On the way</string>
+    <string name="chip_donated">Donated</string>
+    <string name="chip_going">You\'re going</string>
+    <string name="chip_eligible">Eligible to donate</string>
+    <string name="chip_resting">Resting after a donation</string>
+    <string name="progress_donated">%1$d donated</string>
+    <string name="progress_on_the_way">%1$d on the way</string>
+    <string name="progress_needed">%1$d still needed</string>
+    <string name="progress_description">%1$d donated, %2$d on the way, %3$d still needed</string>
+    <string name="menu_more">More options</string>
+    <plurals name="units_count">
+        <item quantity="one">%1$d unit</item>
+        <item quantity="other">%1$d units</item>
+    </plurals>
+
+    <!-- Design: notifications explainer -->
+    <string name="notifications_explainer_point_match">Only when your blood type can help</string>
+    <string name="notifications_explainer_point_nearby">Closest donors first, at most 3 alerts a day</string>
+    <string name="notifications_explainer_point_private">Your number stays private until you offer to help</string>
+
+    <!-- Design: home -->
+    <string name="home_eligibility_title_ready">You can donate</string>
+    <string name="home_eligibility_title_wait">You can donate again around %1$s</string>
+    <plurals name="home_eligibility_body_wait">
+        <item quantity="one">About %1$d day to go. Thank you for donating!</item>
+        <item quantity="other">About %1$d days to go. Thank you for donating!</item>
+    </plurals>
+    <string name="home_eligibility_body_no_type">Add your blood type in Edit profile so we can match you.</string>
+    <string name="home_eligibility_body_alerts_off">Alerts are off. Turn them on in Edit profile to hear about requests.</string>
+    <string name="home_eligibility_body_alerts">We\'ll alert you when someone nearby needs %1$s.</string>
+    <string name="home_my_requests_empty_body">Requests you post appear here, with who is on the way.</string>
+
+    <!-- Design: profile form -->
+    <string name="profile_section_about">About you</string>
+    <string name="profile_section_location">Area and last donation</string>
+
+    <!-- Design: requests -->
+    <string name="request_hospital_hint">Where the patient is</string>
+    <string name="request_units_less">One unit less</string>
+    <string name="request_units_more">One unit more</string>
+    <string name="request_note_title">Note from the requester</string>
+    <string name="request_note_yours">Your note</string>
+    <string name="request_detail_screen_title">Your request</string>
+    <string name="donor_request_screen_title">Blood request</string>
+    <string name="donor_button_maps_short">Maps</string>
+    <string name="donor_privacy_line">Your name and phone number are shared with the person who posted this only after you tap I can help.</string>
+
+    <!-- Design: settings -->
+    <string name="settings_delete_card_title">Delete account</string>
 </resources>

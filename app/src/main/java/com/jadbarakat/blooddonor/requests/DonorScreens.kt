@@ -8,24 +8,18 @@ import android.widget.Toast
 import androidx.annotation.StringRes
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.selection.selectable
-import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.RadioButton
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -36,8 +30,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.jadbarakat.blooddonor.R
@@ -47,7 +42,30 @@ import com.jadbarakat.blooddonor.data.Pledge
 import com.jadbarakat.blooddonor.data.PledgeStatus
 import com.jadbarakat.blooddonor.data.ReportReason
 import com.jadbarakat.blooddonor.data.RequestStatus
+import com.jadbarakat.blooddonor.ui.components.AppCard
+import com.jadbarakat.blooddonor.ui.components.AppScreen
+import com.jadbarakat.blooddonor.ui.components.AppTopBar
+import com.jadbarakat.blooddonor.ui.components.BloodTypeBadge
+import com.jadbarakat.blooddonor.ui.components.ChoiceTile
+import com.jadbarakat.blooddonor.ui.components.ErrorState
+import com.jadbarakat.blooddonor.ui.components.InfoChip
+import com.jadbarakat.blooddonor.ui.components.InfoRow
+import com.jadbarakat.blooddonor.ui.components.InlineMessage
+import com.jadbarakat.blooddonor.ui.components.MenuAction
+import com.jadbarakat.blooddonor.ui.components.NoticeCard
+import com.jadbarakat.blooddonor.ui.components.PrimaryButton
+import com.jadbarakat.blooddonor.ui.components.RequestCard
+import com.jadbarakat.blooddonor.ui.components.SecondaryButton
+import com.jadbarakat.blooddonor.ui.components.SectionHeader
+import com.jadbarakat.blooddonor.ui.components.SectionLoading
+import com.jadbarakat.blooddonor.ui.components.StatusChip
+import com.jadbarakat.blooddonor.ui.components.SuccessChip
+import com.jadbarakat.blooddonor.ui.components.TimeLeftChip
+import com.jadbarakat.blooddonor.ui.components.Tone
+import com.jadbarakat.blooddonor.ui.components.appTextFieldColors
+import com.jadbarakat.blooddonor.ui.components.displayBloodType
 import com.jadbarakat.blooddonor.ui.resolve
+import com.jadbarakat.blooddonor.ui.theme.extendedColors
 import java.time.Duration
 import java.time.Instant
 
@@ -65,62 +83,31 @@ fun ForMeSection(
     val now = rememberNow()
     val visible = uiState.forMe.filter { it.committed || it.effectiveStatus(now) == RequestStatus.OPEN }
     if (visible.isEmpty() && uiState.forMeError == null) return
-    Column(modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text(stringResource(R.string.home_for_me), style = MaterialTheme.typography.titleMedium)
+    Column(modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        SectionHeader(stringResource(R.string.home_for_me))
         if (visible.isEmpty()) {
-            Text(uiState.forMeError!!.resolve(), color = MaterialTheme.colorScheme.error)
-            OutlinedButton(onClick = onRetry) { Text(stringResource(R.string.button_retry)) }
+            InlineMessage(uiState.forMeError!!.resolve(), Tone.ERROR)
+            SecondaryButton(stringResource(R.string.button_retry), onClick = onRetry, compact = true)
         }
         visible.forEach { request ->
             val status = request.effectiveStatus(now)
-            Card(
-                onClick = { onOpen(request) },
-                colors = CardDefaults.cardColors(
-                    containerColor = if (status == RequestStatus.OPEN) MaterialTheme.colorScheme.errorContainer
-                    else MaterialTheme.colorScheme.surfaceVariant,
+            RequestCard(
+                bloodType = request.bloodType,
+                title = stringResource(
+                    R.string.donor_request_title,
+                    displayBloodType(request.bloodType),
+                    stringResource(componentLabel(request.component)),
                 ),
-                modifier = Modifier.fillMaxWidth(),
+                subtitle = stringResource(R.string.donor_request_place, request.hospitalName, request.areaName),
+                muted = status != RequestStatus.OPEN,
+                onClick = { onOpen(request) },
             ) {
-                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(
-                            stringResource(
-                                R.string.request_card_title,
-                                request.bloodType,
-                                stringResource(componentLabel(request.component)),
-                                request.unitsNeeded,
-                            ),
-                            style = MaterialTheme.typography.titleMedium,
-                            modifier = Modifier.weight(1f),
-                        )
-                        if (status != RequestStatus.OPEN) StatusChip(status)
-                    }
-                    Text(
-                        stringResource(R.string.donor_request_place, request.hospitalName, request.areaName),
-                        style = MaterialTheme.typography.bodyMedium,
-                    )
-                    timeLeftText(request.neededBy, now)?.let {
-                        Text(it, style = MaterialTheme.typography.bodySmall)
-                    }
-                    if (request.committed) HelpingBadge()
-                }
+                if (request.committed) SuccessChip(stringResource(R.string.chip_going))
+                if (status != RequestStatus.OPEN) StatusChip(requestChipStatus(status))
+                timeLeftText(request.neededBy, now)?.let { TimeLeftChip(it) }
+                InfoChip(pluralStringResource(R.plurals.units_count, request.unitsNeeded, request.unitsNeeded))
             }
         }
-    }
-}
-
-@Composable
-private fun HelpingBadge() {
-    Surface(
-        color = MaterialTheme.colorScheme.primary,
-        contentColor = MaterialTheme.colorScheme.onPrimary,
-        shape = MaterialTheme.shapes.small,
-    ) {
-        Text(
-            stringResource(R.string.donor_badge_helping),
-            style = MaterialTheme.typography.labelMedium,
-            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-        )
     }
 }
 
@@ -130,6 +117,7 @@ private enum class DonorDialog { HELP, WITHDRAW, REPORT, BLOCK }
  * A request someone else posted, seen by a donor who was notified. Before committing it shows
  * nothing about the requester; after "I can help" it shows their first name and where to go.
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun DonorRequestScreen(
     uiState: RequestsUiState,
@@ -143,32 +131,66 @@ fun DonorRequestScreen(
 ) {
     val request = uiState.donorDetail
     val now = rememberNow()
+    val context = LocalContext.current
     var dialog by rememberSaveable { mutableStateOf<DonorDialog?>(null) }
-    Column(
-        modifier = modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(24.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
+    // Safety: report a problem, or never hear from this requester again.
+    val menu = if (request == null) emptyList() else listOf(
+        MenuAction(
+            label = stringResource(R.string.report_button),
+            icon = R.drawable.ic_flag,
+            onClick = { dialog = DonorDialog.REPORT },
+            enabled = !uiState.isDonorActing,
+        ),
+        MenuAction(
+            label = stringResource(R.string.block_requester_button),
+            icon = R.drawable.ic_block,
+            onClick = { dialog = DonorDialog.BLOCK },
+            enabled = !uiState.isDonorActing,
+            destructive = true,
+        ),
+    )
+
+    AppScreen(
+        modifier = modifier,
+        topBar = {
+            AppTopBar(
+                title = stringResource(R.string.donor_request_screen_title),
+                onBack = onBack,
+                backEnabled = !uiState.isDonorActing,
+                menu = menu,
+            )
+        },
     ) {
         when {
             request != null -> {
                 val status = request.effectiveStatus(now)
                 val pledge = request.myPledge
-                Row(verticalAlignment = Alignment.CenterVertically) {
+
+                // Hero: the blood type, what's needed, and how urgent.
+                Column(
+                    Modifier.fillMaxWidth(),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    BloodTypeBadge(request.bloodType, size = 96.dp)
                     Text(
                         stringResource(
                             R.string.donor_request_title,
-                            request.bloodType,
+                            displayBloodType(request.bloodType),
                             stringResource(componentLabel(request.component)),
                         ),
-                        style = MaterialTheme.typography.headlineSmall,
-                        modifier = Modifier.weight(1f),
+                        style = MaterialTheme.typography.headlineMedium,
+                        color = MaterialTheme.colorScheme.onBackground,
+                        textAlign = TextAlign.Center,
                     )
-                    StatusChip(status)
-                }
-                timeLeftText(request.neededBy, now)?.let {
-                    Text(it, style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally),
+                        verticalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        StatusChip(requestChipStatus(status))
+                        timeLeftText(request.neededBy, now)?.let { TimeLeftChip(it) }
+                        InfoChip(pluralStringResource(R.plurals.units_count, request.unitsNeeded, request.unitsNeeded))
+                    }
                 }
 
                 if (pledge != null) {
@@ -182,39 +204,50 @@ fun DonorRequestScreen(
                     )
                 }
 
-                DetailRow(stringResource(R.string.request_hospital_label), request.hospitalName)
-                DetailRow(stringResource(R.string.donor_request_area_label), request.areaName)
-                DetailRow(stringResource(R.string.request_blood_type_label), request.bloodType)
-                DetailRow(stringResource(R.string.request_component_label), stringResource(componentLabel(request.component)))
-                DetailRow(stringResource(R.string.request_units_label), request.unitsNeeded.toString())
-                DetailRow(stringResource(R.string.request_needed_by_label), formatDateTime(request.neededBy) ?: request.neededBy)
-                request.note?.let { DetailRow(stringResource(R.string.request_note_label), it) }
+                AppCard(spacing = 12.dp) {
+                    InfoRow(
+                        icon = R.drawable.ic_hospital,
+                        title = request.hospitalName,
+                        subtitle = request.areaName,
+                        iconContainer = MaterialTheme.colorScheme.primaryContainer,
+                        iconTint = MaterialTheme.extendedColors.redText,
+                        // Coordinates come with my pledge, so Maps appears once I committed.
+                        action = if (pledge?.status == PledgeStatus.COMMITTED && pledge.hospitalLatitude != null && pledge.hospitalLongitude != null && status == RequestStatus.OPEN) {
+                            {
+                                SecondaryButton(
+                                    text = stringResource(R.string.donor_button_maps_short),
+                                    onClick = { openMaps(context, pledge.hospitalLatitude, pledge.hospitalLongitude, pledge.hospitalName) },
+                                    icon = R.drawable.ic_place,
+                                    compact = true,
+                                )
+                            }
+                        } else null,
+                    )
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outline)
+                    DetailRow(stringResource(R.string.request_component_label), stringResource(componentLabel(request.component)))
+                    DetailRow(stringResource(R.string.request_units_label), request.unitsNeeded.toString())
+                    DetailRow(stringResource(R.string.request_needed_by_label), formatDateTime(request.neededBy) ?: request.neededBy)
+                }
 
-                uiState.donorDetailError?.let {
-                    Text(it.resolve(), color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium)
-                }
-                uiState.donorDetailInfo?.let {
-                    Text(it.resolve(), color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.bodyMedium)
-                }
+                request.note?.let { NoteCard(it) }
+
+                uiState.donorDetailError?.let { InlineMessage(it.resolve(), Tone.ERROR) }
+                uiState.donorDetailInfo?.let { InlineMessage(it.resolve(), Tone.SUCCESS) }
 
                 when {
                     pledge != null -> Unit
-                    status == RequestStatus.OPEN -> Button(
-                        onClick = { dialog = DonorDialog.HELP },
-                        enabled = !uiState.isDonorActing,
-                        modifier = Modifier.fillMaxWidth(),
-                    ) {
-                        if (uiState.isDonorActing) {
-                            CircularProgressIndicator(strokeWidth = 2.dp, modifier = Modifier.padding(2.dp))
-                        } else {
-                            Text(stringResource(R.string.donor_button_can_help))
-                        }
+                    status == RequestStatus.OPEN -> {
+                        PrimaryButton(
+                            text = stringResource(R.string.donor_button_can_help),
+                            onClick = { dialog = DonorDialog.HELP },
+                            loading = uiState.isDonorActing,
+                            large = true,
+                            icon = R.drawable.ic_drop,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        PrivacyLine(stringResource(R.string.donor_privacy_line))
                     }
-                    else -> Text(
-                        stringResource(R.string.donor_request_closed),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
+                    else -> InlineMessage(stringResource(R.string.donor_request_closed), Tone.INFO)
                 }
 
                 when (dialog) {
@@ -252,38 +285,16 @@ fun DonorRequestScreen(
                     )
                     null -> Unit
                 }
-
-                // Safety: report a problem, or never hear from this requester again.
-                HorizontalDivider(Modifier.padding(vertical = 4.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                    TextButton(
-                        onClick = { dialog = DonorDialog.REPORT },
-                        enabled = !uiState.isDonorActing,
-                        modifier = Modifier.weight(1f),
-                    ) { Text(stringResource(R.string.report_button)) }
-                    TextButton(
-                        onClick = { dialog = DonorDialog.BLOCK },
-                        enabled = !uiState.isDonorActing,
-                        modifier = Modifier.weight(1f),
-                    ) { Text(stringResource(R.string.block_requester_button)) }
-                }
             }
 
-            uiState.donorDetailError != null -> Text(
-                uiState.donorDetailError.resolve(),
-                textAlign = TextAlign.Center,
-                modifier = Modifier.fillMaxWidth().padding(top = 48.dp),
-            )
+            uiState.donorDetailError != null -> ErrorState(message = uiState.donorDetailError.resolve())
 
-            else -> CircularProgressIndicator(Modifier.align(Alignment.CenterHorizontally).padding(top = 48.dp))
-        }
-        TextButton(onClick = onBack, enabled = !uiState.isDonorActing, modifier = Modifier.fillMaxWidth()) {
-            Text(stringResource(R.string.request_button_back))
+            else -> SectionLoading(Modifier.padding(top = 48.dp))
         }
     }
 }
 
-/** After "I can help": who is waiting, where to go, and "Did you donate?" when it's time. */
+/** After "I can help": who is waiting, and "Did you donate?" when it's time. */
 @Composable
 private fun PledgeCard(
     pledge: Pledge,
@@ -293,53 +304,90 @@ private fun PledgeCard(
     onWithdraw: () -> Unit,
     onDonationAnswer: (Boolean) -> Unit,
 ) {
-    val context = LocalContext.current
-    val now = rememberNow()
-    Card(
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
-        modifier = Modifier.fillMaxWidth(),
-    ) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            when (pledge.status) {
-                PledgeStatus.DONATED -> Text(stringResource(R.string.donor_donated_thanks), style = MaterialTheme.typography.bodyLarge)
-                PledgeStatus.NOT_DONATED -> Text(stringResource(R.string.donor_not_donated_thanks), style = MaterialTheme.typography.bodyLarge)
-                else -> {
-                    Text(
-                        if (pledge.requesterFirstName.isBlank()) stringResource(R.string.donor_committed_title_no_name)
-                        else stringResource(R.string.donor_committed_title, pledge.requesterFirstName),
-                        style = MaterialTheme.typography.titleMedium,
+    when (pledge.status) {
+        PledgeStatus.DONATED -> NoticeCard(
+            title = stringResource(R.string.donor_donated_thanks),
+            tone = Tone.SUCCESS,
+            icon = R.drawable.ic_drop,
+        )
+        PledgeStatus.NOT_DONATED -> NoticeCard(title = stringResource(R.string.donor_not_donated_thanks), tone = Tone.INFO)
+        else -> AppCard(color = MaterialTheme.extendedColors.successContainer, border = null) {
+            SuccessChip(stringResource(R.string.chip_going))
+            Text(
+                if (pledge.requesterFirstName.isBlank()) stringResource(R.string.donor_committed_title_no_name)
+                else stringResource(R.string.donor_committed_title, pledge.requesterFirstName),
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+            Text(
+                stringResource(R.string.donor_committed_reminder),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+            if (canAnswer) {
+                Text(
+                    stringResource(R.string.donor_donated_question),
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    PrimaryButton(
+                        text = stringResource(R.string.donor_donated_yes),
+                        onClick = { onDonationAnswer(true) },
+                        enabled = !isActing,
+                        containerColor = MaterialTheme.extendedColors.success,
+                        contentColor = MaterialTheme.extendedColors.successContainer,
+                        modifier = Modifier.weight(1f),
                     )
-                    Text(
-                        stringResource(R.string.donor_request_place, pledge.hospitalName, pledge.areaName),
-                        style = MaterialTheme.typography.bodyLarge,
+                    SecondaryButton(
+                        text = stringResource(R.string.donor_donated_no),
+                        onClick = { onDonationAnswer(false) },
+                        enabled = !isActing,
+                        modifier = Modifier.weight(1f),
                     )
-                    timeLeftText(pledge.neededBy, now)?.let { Text(it, style = MaterialTheme.typography.bodyMedium) }
-                    Text(stringResource(R.string.donor_committed_reminder), style = MaterialTheme.typography.bodyMedium)
-                    if (pledge.hospitalLatitude != null && pledge.hospitalLongitude != null && requestOpen) {
-                        Button(
-                            onClick = { openMaps(context, pledge.hospitalLatitude, pledge.hospitalLongitude, pledge.hospitalName) },
-                            modifier = Modifier.fillMaxWidth(),
-                        ) { Text(stringResource(R.string.donor_button_open_maps)) }
-                    }
-                    if (canAnswer) {
-                        Text(stringResource(R.string.donor_donated_question), style = MaterialTheme.typography.titleMedium)
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Button(onClick = { onDonationAnswer(true) }, enabled = !isActing, modifier = Modifier.weight(1f)) {
-                                Text(stringResource(R.string.donor_donated_yes))
-                            }
-                            OutlinedButton(onClick = { onDonationAnswer(false) }, enabled = !isActing, modifier = Modifier.weight(1f)) {
-                                Text(stringResource(R.string.donor_donated_no))
-                            }
-                        }
-                    }
-                    if (requestOpen) {
-                        OutlinedButton(onClick = onWithdraw, enabled = !isActing, modifier = Modifier.fillMaxWidth()) {
-                            Text(stringResource(R.string.donor_button_withdraw))
-                        }
-                    }
                 }
             }
+            if (requestOpen) {
+                SecondaryButton(
+                    text = stringResource(R.string.donor_button_withdraw),
+                    onClick = onWithdraw,
+                    enabled = !isActing,
+                    destructive = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
         }
+    }
+}
+
+/** The request's note, under [title]. */
+@Composable
+internal fun NoteCard(note: String, title: String = stringResource(R.string.request_note_title)) {
+    AppCard(color = MaterialTheme.colorScheme.surfaceVariant, border = null, spacing = 4.dp) {
+        Text(
+            title,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Text(note, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurface)
+    }
+}
+
+/** A small lock and a line explaining what is shared. */
+@Composable
+internal fun PrivacyLine(text: String) {
+    Row(
+        verticalAlignment = Alignment.Top,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Icon(
+            painterResource(R.drawable.ic_lock),
+            contentDescription = null,
+            tint = MaterialTheme.extendedColors.tertiaryText,
+            modifier = Modifier.size(16.dp).padding(top = 2.dp),
+        )
+        Text(text, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.extendedColors.tertiaryText)
     }
 }
 
@@ -352,18 +400,16 @@ private fun ReportDialog(onSend: (reason: String, details: String) -> Unit, onDi
         onDismissRequest = onDismiss,
         title = { Text(stringResource(R.string.report_title)) },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.selectableGroup()) {
                 Text(stringResource(R.string.report_intro), style = MaterialTheme.typography.bodyMedium)
                 ReportReason.ALL.forEach { option ->
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .selectable(selected = reason == option, onClick = { reason = option }, role = Role.RadioButton),
-                    ) {
-                        RadioButton(selected = reason == option, onClick = null)
-                        Text(stringResource(reportReasonLabel(option)), modifier = Modifier.padding(start = 8.dp))
-                    }
+                    ChoiceTile(
+                        text = stringResource(reportReasonLabel(option)),
+                        selected = reason == option,
+                        onClick = { reason = option },
+                        minHeight = 44.dp,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
                 }
                 OutlinedTextField(
                     value = details,
@@ -371,6 +417,7 @@ private fun ReportDialog(onSend: (reason: String, details: String) -> Unit, onDi
                     label = { Text(stringResource(R.string.report_details_label)) },
                     supportingText = { Text(stringResource(R.string.request_note_counter, details.length, MAX_REPORT_DETAILS)) },
                     minLines = 2,
+                    colors = appTextFieldColors(),
                     modifier = Modifier.fillMaxWidth(),
                 )
             }

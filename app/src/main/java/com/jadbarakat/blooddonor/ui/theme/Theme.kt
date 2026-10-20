@@ -1,58 +1,93 @@
 package com.jadbarakat.blooddonor.ui.theme
 
-import android.app.Activity
-import android.os.Build
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
-import androidx.compose.material3.dynamicDarkColorScheme
-import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.platform.LocalContext
-
-private val DarkColorScheme = darkColorScheme(
-    primary = Purple80,
-    secondary = PurpleGrey80,
-    tertiary = Pink80
-)
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.ReadOnlyComposable
+import androidx.compose.ui.graphics.Color
 
 private val LightColorScheme = lightColorScheme(
-    primary = Purple40,
-    secondary = PurpleGrey40,
-    tertiary = Pink40
-
-    /* Other default colors to override
-    background = Color(0xFFFFFBFE),
-    surface = Color(0xFFFFFBFE),
+    primary = Red,
     onPrimary = Color.White,
+    primaryContainer = RedContainerLight,
+    onPrimaryContainer = OnRedContainerLight,
+    secondary = Red,
     onSecondary = Color.White,
-    onTertiary = Color.White,
-    onBackground = Color(0xFF1C1B1F),
-    onSurface = Color(0xFF1C1B1F),
-    */
+    secondaryContainer = RedContainerLight,
+    onSecondaryContainer = OnRedContainerLight,
+    tertiary = TertiaryTextLight,
+    background = BackgroundLight,
+    onBackground = OnSurfaceLight,
+    surface = SurfaceLight,
+    onSurface = OnSurfaceLight,
+    surfaceVariant = SurfaceVariantLight,
+    onSurfaceVariant = OnSurfaceVariantLight,
+    surfaceContainerLowest = SurfaceLight,
+    surfaceContainerLow = SurfaceLight,
+    surfaceContainer = SurfaceLight,
+    surfaceContainerHigh = SurfaceLight,
+    surfaceContainerHighest = SurfaceVariantLight,
+    surfaceTint = Color.Transparent,
+    outline = OutlineLight,
+    outlineVariant = OutlineLight,
+    error = Red,
+    onError = Color.White,
+    errorContainer = RedContainerLight,
+    onErrorContainer = OnRedContainerLight,
 )
 
+private val DarkColorScheme = darkColorScheme(
+    primary = RedDark,
+    onPrimary = Color.White,
+    primaryContainer = RedContainerDark,
+    onPrimaryContainer = OnRedContainerDark,
+    secondary = RedTextDark,
+    onSecondary = Color.White,
+    secondaryContainer = RedContainerDark,
+    onSecondaryContainer = OnRedContainerDark,
+    tertiary = TertiaryTextDark,
+    background = BackgroundDark,
+    onBackground = OnSurfaceDark,
+    surface = SurfaceDark,
+    onSurface = OnSurfaceDark,
+    surfaceVariant = SurfaceVariantDark,
+    onSurfaceVariant = OnSurfaceVariantDark,
+    surfaceContainerLowest = SurfaceDark,
+    surfaceContainerLow = SurfaceDark,
+    surfaceContainer = SurfaceDark,
+    surfaceContainerHigh = SurfaceDark,
+    surfaceContainerHighest = SurfaceVariantDark,
+    surfaceTint = Color.Transparent,
+    outline = OutlineDark,
+    outlineVariant = OutlineDark,
+    error = RedTextDark,
+    onError = Color.White,
+    errorContainer = RedContainerDark,
+    onErrorContainer = OnRedContainerDark,
+)
+
+/**
+ * The brand theme. Dynamic colour is deliberately off so the red always shows;
+ * light or dark follows the system setting.
+ */
 @Composable
 fun BloodDonorTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
-    // Dynamic color is available on Android 12+
-    dynamicColor: Boolean = true,
-    content: @Composable () -> Unit
+    content: @Composable () -> Unit,
 ) {
-    val colorScheme = when {
-        dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
-            val context = LocalContext.current
-            if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
-        }
-
-        darkTheme -> DarkColorScheme
-        else -> LightColorScheme
+    CompositionLocalProvider(LocalExtendedColors provides if (darkTheme) DarkExtendedColors else LightExtendedColors) {
+        MaterialTheme(
+            colorScheme = if (darkTheme) DarkColorScheme else LightColorScheme,
+            typography = Typography,
+            shapes = Shapes,
+            content = content,
+        )
     }
-
-    MaterialTheme(
-        colorScheme = colorScheme,
-        typography = Typography,
-        content = content
-    )
 }
+
+/** The extra semantic colours, e.g. `MaterialTheme.extendedColors.success`. */
+val MaterialTheme.extendedColors: ExtendedColors
+    @Composable @ReadOnlyComposable get() = LocalExtendedColors.current

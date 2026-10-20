@@ -4,9 +4,7 @@ import androidx.annotation.StringRes
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -22,6 +20,7 @@ import com.jadbarakat.blooddonor.R
 import com.jadbarakat.blooddonor.data.BloodRequest
 import com.jadbarakat.blooddonor.data.Component
 import com.jadbarakat.blooddonor.data.RequestStatus
+import com.jadbarakat.blooddonor.ui.components.ChipStatus
 import kotlinx.coroutines.delay
 import java.time.Duration
 import java.time.Instant
@@ -35,15 +34,6 @@ fun componentLabel(component: String): Int = when (component) {
     Component.RED_CELLS -> R.string.component_red_cells
     Component.PLATELETS -> R.string.component_platelets
     Component.PLASMA -> R.string.component_plasma
-    else -> R.string.label_unknown
-}
-
-@StringRes
-private fun statusLabel(status: String): Int = when (status) {
-    RequestStatus.OPEN -> R.string.request_status_open
-    RequestStatus.FULFILLED -> R.string.request_status_fulfilled
-    RequestStatus.CANCELLED -> R.string.request_status_cancelled
-    RequestStatus.EXPIRED -> R.string.request_status_expired
     else -> R.string.label_unknown
 }
 
@@ -87,21 +77,12 @@ fun timeLeftText(neededBy: String, now: Instant): String? {
     }
 }
 
-@Composable
-fun StatusChip(status: String, modifier: Modifier = Modifier) {
-    val colors = MaterialTheme.colorScheme
-    val (container, content) = when (status) {
-        RequestStatus.OPEN -> colors.primaryContainer to colors.onPrimaryContainer
-        RequestStatus.FULFILLED -> colors.tertiaryContainer to colors.onTertiaryContainer
-        else -> colors.surfaceVariant to colors.onSurfaceVariant
-    }
-    Surface(color = container, contentColor = content, shape = MaterialTheme.shapes.small, modifier = modifier) {
-        Text(
-            text = stringResource(statusLabel(status)),
-            style = MaterialTheme.typography.labelMedium,
-            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-        )
-    }
+/** The chip for a request status (see [effectiveStatus]). */
+fun requestChipStatus(status: String): ChipStatus = when (status) {
+    RequestStatus.OPEN -> ChipStatus.OPEN
+    RequestStatus.FULFILLED -> ChipStatus.FULFILLED
+    RequestStatus.EXPIRED -> ChipStatus.EXPIRED
+    else -> ChipStatus.CANCELLED
 }
 
 fun formatDateTime(iso: String?): String? = iso?.let {
@@ -111,18 +92,20 @@ fun formatDateTime(iso: String?): String? = iso?.let {
     }.getOrNull()
 }
 
+/** A label on the left and its value on the right, e.g. "Needed by   Mon 14:00". */
 @Composable
 fun DetailRow(label: String, value: String) {
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
         Text(
             text = label,
-            style = MaterialTheme.typography.bodyLarge,
+            style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.weight(1f),
         )
         Text(
             text = value,
-            style = MaterialTheme.typography.bodyLarge,
+            style = MaterialTheme.typography.titleSmall,
+            color = MaterialTheme.colorScheme.onSurface,
             textAlign = TextAlign.End,
             modifier = Modifier.weight(1.5f),
         )

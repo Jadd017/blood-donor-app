@@ -2,22 +2,11 @@ package com.jadbarakat.blooddonor.settings
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -27,7 +16,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.KeyboardCapitalization
@@ -36,9 +24,24 @@ import com.jadbarakat.blooddonor.R
 import com.jadbarakat.blooddonor.data.BlockedUser
 import com.jadbarakat.blooddonor.data.Profile
 import com.jadbarakat.blooddonor.requests.formatDateTime
+import com.jadbarakat.blooddonor.ui.components.AppCard
+import com.jadbarakat.blooddonor.ui.components.AppScreen
+import com.jadbarakat.blooddonor.ui.components.AppTopBar
+import com.jadbarakat.blooddonor.ui.components.EmptyState
+import com.jadbarakat.blooddonor.ui.components.ErrorState
+import com.jadbarakat.blooddonor.ui.components.InfoRow
+import com.jadbarakat.blooddonor.ui.components.InlineMessage
+import com.jadbarakat.blooddonor.ui.components.NoticeCard
+import com.jadbarakat.blooddonor.ui.components.PrimaryButton
+import com.jadbarakat.blooddonor.ui.components.SecondaryButton
+import com.jadbarakat.blooddonor.ui.components.SectionHeader
+import com.jadbarakat.blooddonor.ui.components.SectionLoading
+import com.jadbarakat.blooddonor.ui.components.Tone
+import com.jadbarakat.blooddonor.ui.components.appTextFieldColors
 import com.jadbarakat.blooddonor.ui.formatWhen
 import com.jadbarakat.blooddonor.ui.postingSuspendedMessage
 import com.jadbarakat.blooddonor.ui.resolve
+import com.jadbarakat.blooddonor.ui.theme.extendedColors
 import java.time.Instant
 
 /** Blocked users, notification and posting status, and account deletion. */
@@ -55,55 +58,43 @@ fun SettingsScreen(
     LaunchedEffect(uiState.accountDeleted) { if (uiState.accountDeleted) onAccountDeleted() }
     var showDelete by rememberSaveable { mutableStateOf(false) }
 
-    Column(
-        modifier = modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(24.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
+    AppScreen(
+        modifier = modifier,
+        topBar = {
+            AppTopBar(title = stringResource(R.string.settings_title), onBack = onBack, backEnabled = !uiState.isDeleting)
+        },
     ) {
-        Text(stringResource(R.string.settings_title), style = MaterialTheme.typography.headlineSmall)
-
         val profile = uiState.profile
         when {
-            uiState.isLoading -> CircularProgressIndicator(Modifier.align(Alignment.CenterHorizontally))
-            uiState.loadError != null -> {
-                Text(uiState.loadError.resolve(), color = MaterialTheme.colorScheme.error)
-                OutlinedButton(onClick = onRetry) { Text(stringResource(R.string.button_retry)) }
-            }
+            uiState.isLoading -> SectionLoading()
+            uiState.loadError != null -> ErrorState(message = uiState.loadError.resolve(), onRetry = onRetry)
             profile != null -> {
-                SectionTitle(stringResource(R.string.settings_notifications_section))
+                SectionHeader(stringResource(R.string.settings_notifications_section))
                 NotificationStatus(profile)
                 PostingStatus(profile)
 
-                HorizontalDivider(Modifier.padding(vertical = 4.dp))
-                SectionTitle(stringResource(R.string.settings_blocked_section))
+                SectionHeader(stringResource(R.string.settings_blocked_section))
                 BlockedUsers(uiState, onUnblock)
             }
         }
 
-        HorizontalDivider(Modifier.padding(vertical = 4.dp))
-        SectionTitle(stringResource(R.string.settings_account_section))
-        Text(stringResource(R.string.settings_delete_explanation), style = MaterialTheme.typography.bodyMedium)
-        uiState.deleteError?.let { Text(it.resolve(), color = MaterialTheme.colorScheme.error) }
-        Button(
-            onClick = { showDelete = true },
-            enabled = !uiState.isDeleting,
-            colors = ButtonDefaults.buttonColors(
-                containerColor = MaterialTheme.colorScheme.error,
-                contentColor = MaterialTheme.colorScheme.onError,
-            ),
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            if (uiState.isDeleting) {
-                CircularProgressIndicator(strokeWidth = 2.dp, modifier = Modifier.padding(2.dp))
-            } else {
-                Text(stringResource(R.string.settings_delete_button))
-            }
-        }
-
-        TextButton(onClick = onBack, enabled = !uiState.isDeleting, modifier = Modifier.fillMaxWidth()) {
-            Text(stringResource(R.string.request_button_back))
+        SectionHeader(stringResource(R.string.settings_account_section))
+        AppCard {
+            InfoRow(
+                icon = R.drawable.ic_delete,
+                title = stringResource(R.string.settings_delete_card_title),
+                subtitle = stringResource(R.string.settings_delete_explanation),
+                iconContainer = MaterialTheme.colorScheme.primaryContainer,
+                iconTint = MaterialTheme.extendedColors.redText,
+            )
+            uiState.deleteError?.let { InlineMessage(it.resolve(), Tone.ERROR) }
+            PrimaryButton(
+                text = stringResource(R.string.settings_delete_button),
+                onClick = { showDelete = true },
+                loading = uiState.isDeleting,
+                icon = R.drawable.ic_delete,
+                modifier = Modifier.fillMaxWidth(),
+            )
         }
     }
 
@@ -119,20 +110,27 @@ fun SettingsScreen(
 }
 
 @Composable
-private fun SectionTitle(text: String) {
-    Text(text, style = MaterialTheme.typography.titleMedium, modifier = Modifier.fillMaxWidth())
-}
-
-@Composable
 private fun NotificationStatus(profile: Profile) {
     val pausedUntil = profile.notificationsPausedUntil?.takeIf { isFuture(it) }
-    when {
-        pausedUntil != null -> WarningCard(
+    if (pausedUntil != null) {
+        NoticeCard(
             title = stringResource(R.string.settings_notifications_paused, formatWhen(pausedUntil) ?: pausedUntil),
             body = stringResource(R.string.settings_notifications_paused_no_shows),
+            tone = Tone.WARNING,
+            icon = R.drawable.ic_notifications,
         )
-        !profile.isDonor -> Text(stringResource(R.string.settings_notifications_off), style = MaterialTheme.typography.bodyMedium)
-        else -> Text(stringResource(R.string.settings_notifications_on), style = MaterialTheme.typography.bodyMedium)
+    } else {
+        AppCard(contentPadding = 12.dp) {
+            InfoRow(
+                icon = R.drawable.ic_notifications,
+                title = stringResource(if (profile.isDonor) R.string.home_notifications_on else R.string.home_notifications_off),
+                subtitle = stringResource(
+                    if (profile.isDonor) R.string.settings_notifications_on else R.string.settings_notifications_off,
+                ),
+                iconContainer = if (profile.isDonor) MaterialTheme.extendedColors.successContainer else MaterialTheme.colorScheme.surfaceVariant,
+                iconTint = if (profile.isDonor) MaterialTheme.extendedColors.success else MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
     }
 }
 
@@ -142,39 +140,36 @@ private fun PostingStatus(profile: Profile) {
         profile.postingSuspendedPermanent -> "permanent"
         else -> profile.postingSuspendedUntil?.takeIf { isFuture(it) }
     } ?: return
-    WarningCard(title = stringResource(R.string.settings_posting_suspended_title), body = postingSuspendedMessage(until).resolve())
-}
-
-@Composable
-private fun WarningCard(title: String, body: String) {
-    Card(
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer),
-        modifier = Modifier.fillMaxWidth(),
-    ) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text(title, style = MaterialTheme.typography.titleSmall)
-            Text(body, style = MaterialTheme.typography.bodyMedium)
-        }
-    }
+    NoticeCard(
+        title = stringResource(R.string.settings_posting_suspended_title),
+        body = postingSuspendedMessage(until).resolve(),
+        tone = Tone.ERROR,
+        icon = R.drawable.ic_block,
+    )
 }
 
 @Composable
 private fun BlockedUsers(uiState: SettingsUiState, onUnblock: (Long) -> Unit) {
-    uiState.blocksError?.let { Text(it.resolve(), color = MaterialTheme.colorScheme.error) }
+    uiState.blocksError?.let { InlineMessage(it.resolve(), Tone.ERROR) }
     if (uiState.blocks.isEmpty()) {
-        Text(
-            stringResource(R.string.settings_blocked_empty),
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
+        EmptyState(icon = R.drawable.ic_shield, title = stringResource(R.string.settings_blocked_empty))
         return
     }
-    uiState.blocks.forEach { blocked ->
-        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-            Text(blockedLabel(blocked), style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
-            OutlinedButton(onClick = { onUnblock(blocked.userId) }, enabled = blocked.userId !in uiState.unblocking) {
-                Text(stringResource(R.string.settings_unblock))
-            }
+    AppCard(spacing = 4.dp, contentPadding = 12.dp) {
+        uiState.blocks.forEachIndexed { index, blocked ->
+            if (index > 0) HorizontalDivider(color = MaterialTheme.colorScheme.outline)
+            InfoRow(
+                icon = if (blocked.fullName != null) R.drawable.ic_person else R.drawable.ic_hospital,
+                title = blockedLabel(blocked),
+                action = {
+                    SecondaryButton(
+                        text = stringResource(R.string.settings_unblock),
+                        onClick = { onUnblock(blocked.userId) },
+                        enabled = blocked.userId !in uiState.unblocking,
+                        compact = true,
+                    )
+                },
+            )
         }
     }
 }
@@ -206,6 +201,7 @@ private fun DeleteAccountDialog(onConfirm: () -> Unit, onDismiss: () -> Unit) {
                     value = typed,
                     onValueChange = { typed = it },
                     singleLine = true,
+                    colors = appTextFieldColors(),
                     keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Characters),
                     modifier = Modifier.fillMaxWidth(),
                 )
@@ -213,7 +209,7 @@ private fun DeleteAccountDialog(onConfirm: () -> Unit, onDismiss: () -> Unit) {
         },
         confirmButton = {
             TextButton(onClick = onConfirm, enabled = typed.trim() == DELETE_CONFIRMATION_WORD) {
-                Text(stringResource(R.string.settings_delete_confirm_button), color = MaterialTheme.colorScheme.error)
+                Text(stringResource(R.string.settings_delete_confirm_button), color = MaterialTheme.extendedColors.redText)
             }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.request_confirm_back)) } },
