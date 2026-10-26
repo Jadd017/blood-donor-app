@@ -23,6 +23,19 @@ class ExposedDeviceTokenRepository(private val db: Database) : DeviceTokenReposi
                 st.setObject(3, now.toOffset())
                 st.executeUpdate()
             }
+            // Same transaction: a user can't pile up tokens (each one is another push per notification).
+            conn.prepareStatement(
+                """
+                DELETE FROM device_tokens WHERE user_id = ? AND id NOT IN (
+                    SELECT id FROM device_tokens WHERE user_id = ? ORDER BY updated_at DESC, id DESC LIMIT ?
+                )
+                """.trimIndent()
+            ).use { st ->
+                st.setLong(1, userId)
+                st.setLong(2, userId)
+                st.setInt(3, MAX_DEVICE_TOKENS_PER_USER)
+                st.executeUpdate()
+            }
         }
     }
 

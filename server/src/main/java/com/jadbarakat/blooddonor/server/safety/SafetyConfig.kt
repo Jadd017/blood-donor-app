@@ -34,6 +34,11 @@ data class SafetyConfig(
     val rateLimitHelpPerMinute: Int = 10,         // RATE_LIMIT_HELP_PER_MINUTE
     val rateLimitReportPerMinute: Int = 5,        // RATE_LIMIT_REPORT_PER_MINUTE
     val rateLimitBlocksPerMinute: Int = 20,       // RATE_LIMIT_BLOCKS_PER_MINUTE
+    /** PUT and DELETE /me (sign-up, profile changes, account deletion). */
+    val rateLimitProfilePerMinute: Int = 10,      // RATE_LIMIT_PROFILE_PER_MINUTE
+    val rateLimitDeviceTokenPerMinute: Int = 10,  // RATE_LIMIT_DEVICE_TOKEN_PER_MINUTE
+    /** The other writes: fulfill, cancel, confirm a helper, "Did you donate?". */
+    val rateLimitWritePerMinute: Int = 30,        // RATE_LIMIT_WRITE_PER_MINUTE
 ) {
     /** The rolling window of [maxRequestsPer24h]. */
     val dailyWindow: Duration get() = 24.hours
@@ -45,7 +50,8 @@ data class SafetyConfig(
         }
         require(
             listOf(rateLimitGeneralPerMinute, rateLimitPostRequestPerMinute, rateLimitHelpPerMinute,
-                rateLimitReportPerMinute, rateLimitBlocksPerMinute).all { it > 0 }
+                rateLimitReportPerMinute, rateLimitBlocksPerMinute, rateLimitProfilePerMinute,
+                rateLimitDeviceTokenPerMinute, rateLimitWritePerMinute).all { it > 0 }
         ) { "Rate limits must be positive" }
     }
 
@@ -74,6 +80,9 @@ data class SafetyConfig(
                 rateLimitHelpPerMinute = int("RATE_LIMIT_HELP_PER_MINUTE", d.rateLimitHelpPerMinute),
                 rateLimitReportPerMinute = int("RATE_LIMIT_REPORT_PER_MINUTE", d.rateLimitReportPerMinute),
                 rateLimitBlocksPerMinute = int("RATE_LIMIT_BLOCKS_PER_MINUTE", d.rateLimitBlocksPerMinute),
+                rateLimitProfilePerMinute = int("RATE_LIMIT_PROFILE_PER_MINUTE", d.rateLimitProfilePerMinute),
+                rateLimitDeviceTokenPerMinute = int("RATE_LIMIT_DEVICE_TOKEN_PER_MINUTE", d.rateLimitDeviceTokenPerMinute),
+                rateLimitWritePerMinute = int("RATE_LIMIT_WRITE_PER_MINUTE", d.rateLimitWritePerMinute),
             )
         }
     }

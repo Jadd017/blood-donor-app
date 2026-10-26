@@ -30,6 +30,7 @@ import com.jadbarakat.blooddonor.server.matching.MatchingConfig
 import com.jadbarakat.blooddonor.server.safety.SafetyConfig
 import com.jadbarakat.blooddonor.server.safety.StrikeRules
 import com.jadbarakat.blooddonor.server.safety.Suspension
+import com.jadbarakat.blooddonor.server.validation.TextRules
 import com.jadbarakat.blooddonor.server.validation.validate
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.auth.authenticate
@@ -55,6 +56,12 @@ const val FIREBASE_AUTH = "firebase"
 const val MAX_COMMITTED_PLEDGES = 2
 
 const val MAX_REPORT_DETAILS = 200
+
+/** How long after a donor commits the requester may say whether they donated (unless the request closed sooner). */
+val MIN_TIME_BEFORE_CONFIRMING_HELPER: java.time.Duration = java.time.Duration.ofMinutes(30)
+
+/** How long after a request closes its owner still sees the helpers' phone numbers. */
+val HELPER_PHONES_VISIBLE_AFTER_CLOSE: java.time.Duration = java.time.Duration.ofDays(7)
 
 /** Told about every new request, e.g. to start notifying donors. Must not block. */
 fun interface RequestCreatedListener {
@@ -127,7 +134,7 @@ fun Route.apiV1(
 
     /** A request [profile] may report or block the requester of: they were notified about it or committed to it. */
     suspend fun RoutingCall.requestSeenAsDonor(profile: UserProfile, ownMessage: String): BloodRequest {
-        val request = parameters["id"]?.toLongOrNull()?.let { requests.findById(it) } ?: throw requestNotFound()
+        val request = idParameter("id")?.let { requests.findById(it) } ?: throw requestNotFound()
         if (request.requesterId == profile.id) throw ApiException(HttpStatusCode.Conflict, "own_request", ownMessage)
         if (!requests.isNotified(request.id, profile.id) && pledges.find(request.id, profile.id) == null) {
             throw requestNotFound()
@@ -135,9 +142,14 @@ fun Route.apiV1(
         return request
     }
 
-    /** The owner's view, with the helpers' contact details and who still counts as helping. */
+    /**
+     * The owner's view, with the helpers' contact details and who still counts as helping. A helper's
+     * phone is left out once either of them blocked the other, and a week after the request closed.
+     */
     suspend fun ownerView(request: BloodRequest): BloodRequestResponse {
         val now = clock.instant()
+        val blocked = safety.blockedEitherWay(request.requesterId)
+        val phonesVisible = request.closedAt?.let { now.isBefore(it.plus(HELPER_PHONES_VISIBLE_AFTER_CLOSE)) } ?: true
         val helpers = pledges.helpers(request.id).map { helper ->
             val state = when {
                 helper.requesterOutcome == RequesterOutcome.DONATED -> HelperState.DONATED
@@ -146,7 +158,8 @@ fun Route.apiV1(
                     HelperState.ON_THE_WAY
                 else -> HelperState.AWAITING_CONFIRMATION
             }
-            helper.toResponse(HelperRules.arrivalEnds(helper.committedAt, request.neededBy, arrivalWindow), state)
+            val shown = if (phonesVisible && helper.donorId !in blocked) helper else helper.copy(phone = "")
+            shown.toResponse(HelperRules.arrivalEnds(helper.committedAt, request.neededBy, arrivalWindow), state)
         }
         val donated = helpers.count { it.state == HelperState.DONATED }
         val onTheWay = helpers.count { it.state == HelperState.ON_THE_WAY }
@@ -192,36 +205,39 @@ fun Route.apiV1(
             }
         }
 
-        authenticate(FIREBASE_AUTH) {
-            rateLimit(RateLimits.GENERAL) {
+        // The general limit wraps authentication, so calls with a missing or invalid token count too (per IP).
+        rateLimit(RateLimits.GENERAL) {
+            authenticate(FIREBASE_AUTH) {
                 get("/me") {
                     val profile = users.findByUid(call.user().uid)
                         ?: throw ApiException(HttpStatusCode.NotFound, "profile_not_found", "No profile yet, create it with PUT /me")
                     call.respond(profileResponse(profile))
                 }
 
-                put("/me") {
-                    val user = call.user()
-                    val input = call.receive<ProfileRequest>().validate(LocalDate.now(clock))
-                    if (input.areaId != null && !areas.exists(input.areaId)) {
-                        throw badRequest("unknown_area", "areaId ${input.areaId} does not exist")
+                rateLimit(RateLimits.PROFILE) {
+                    put("/me") {
+                        val user = call.user()
+                        val input = call.receive<ProfileRequest>().validate(LocalDate.now(clock))
+                        if (input.areaId != null && !areas.exists(input.areaId)) {
+                            throw badRequest("unknown_area", "areaId ${input.areaId} does not exist")
+                        }
+                        // uid and email come only from the verified token.
+                        call.respond(profileResponse(users.upsert(user.uid, user.email, input)))
                     }
-                    // uid and email come only from the verified token.
-                    call.respond(profileResponse(users.upsert(user.uid, user.email, input)))
-                }
 
-                // Account deletion (Google Play requirement). Safe to retry: once the profile is gone,
-                // only the Firebase user is left to delete.
-                delete("/me") {
-                    val user = call.user()
-                    val profile = users.findByUid(user.uid)
-                    val deletion = profile?.let { safety.deleteAccount(it.id, clock.instant()) }
-                    if (deletion != null) {
-                        deletion.cancelledRequestIds.forEach { onRequestEvent.onEvent(RequestEvent.RequestClosed(it)) }
-                        deletion.withdrawnRequestIds.forEach { onRequestEvent.onEvent(RequestEvent.DonorWithdrew(it)) }
+                    // Account deletion (Google Play requirement). Safe to retry: once the profile is gone,
+                    // only the Firebase user is left to delete.
+                    delete("/me") {
+                        val user = call.user()
+                        val profile = users.findByUid(user.uid)
+                        val deletion = profile?.let { safety.deleteAccount(it.id, clock.instant()) }
+                        if (deletion != null) {
+                            deletion.cancelledRequestIds.forEach { onRequestEvent.onEvent(RequestEvent.RequestClosed(it)) }
+                            deletion.withdrawnRequestIds.forEach { onRequestEvent.onEvent(RequestEvent.DonorWithdrew(it)) }
+                        }
+                        accountDeleter.deleteFirebaseUser(user.uid)
+                        call.respond(HttpStatusCode.NoContent)
                     }
-                    accountDeleter.deleteFirebaseUser(user.uid)
-                    call.respond(HttpStatusCode.NoContent)
                 }
 
                 route("/blocks") {
@@ -235,7 +251,7 @@ fun Route.apiV1(
                         // requests. A requester is blocked from the request (POST /requests/{id}/block-requester).
                         post("/{userId}") {
                             val profile = call.requireProfile(users)
-                            val target = call.parameters["userId"]?.toLongOrNull() ?: throw userNotFound()
+                            val target = call.idParameter("userId") ?: throw userNotFound()
                             if (target == profile.id) throw badRequest("cannot_block_self", "You can't block yourself")
                             if (!safety.helpedRequester(donorId = target, requesterId = profile.id)) throw userNotFound()
                             safety.block(profile.id, target, viaRequestId = null, clock.instant())
@@ -244,7 +260,7 @@ fun Route.apiV1(
 
                         delete("/{userId}") {
                             val profile = call.requireProfile(users)
-                            val target = call.parameters["userId"]?.toLongOrNull() ?: throw userNotFound()
+                            val target = call.idParameter("userId") ?: throw userNotFound()
                             safety.unblock(profile.id, target)
                             call.respond(HttpStatusCode.NoContent)
                         }
@@ -252,24 +268,26 @@ fun Route.apiV1(
                 }
 
                 route("/me/device-token") {
-                    put {
-                        val profile = call.requireProfile(users)
-                        val token = call.receive<DeviceTokenBody>().validToken()
-                        deviceTokens.upsert(profile.id, token, clock.instant())
-                        call.respond(HttpStatusCode.NoContent)
-                    }
+                    rateLimit(RateLimits.DEVICE_TOKEN) {
+                        put {
+                            val profile = call.requireProfile(users)
+                            val token = call.receive<DeviceTokenBody>().validToken()
+                            deviceTokens.upsert(profile.id, token, clock.instant())
+                            call.respond(HttpStatusCode.NoContent)
+                        }
 
-                    delete {
-                        val profile = call.requireProfile(users)
-                        deviceTokens.delete(profile.id, call.receive<DeviceTokenBody>().validToken())
-                        call.respond(HttpStatusCode.NoContent)
+                        delete {
+                            val profile = call.requireProfile(users)
+                            deviceTokens.delete(profile.id, call.receive<DeviceTokenBody>().validToken())
+                            call.respond(HttpStatusCode.NoContent)
+                        }
                     }
                 }
 
                 get("/hospitals") {
                     call.requireProfile(users)
                     val areaId = call.request.queryParameters["areaId"]?.let {
-                        it.toIntOrNull() ?: throw badRequest("invalid_area_id", "areaId must be a number")
+                        it.toIntOrNull()?.takeIf { id -> id > 0 } ?: throw badRequest("invalid_area_id", "areaId must be a positive number")
                     }
                     call.respond(hospitals.all(areaId).map { it.toResponse() })
                 }
@@ -309,23 +327,29 @@ fun Route.apiV1(
                     }
 
                     // The owner sees everything; a donor who was notified sees the donor view; anyone else gets 404.
+                    // A hidden (reported) request is only left to donors who committed to it, without its note.
                     get("/{id}") {
                         val profile = call.requireProfile(users)
-                        val request = call.parameters["id"]?.toLongOrNull()?.let { requests.findById(it) }?.effective(clock.instant())
+                        val request = call.idParameter("id")?.let { requests.findById(it) }?.effective(clock.instant())
                         when {
                             request == null -> throw requestNotFound()
                             request.requesterId == profile.id -> call.respond(ownerView(request))
-                            requests.isNotified(request.id, profile.id) -> call.respond(donorView(request, profile.id))
+                            !requests.isNotified(request.id, profile.id) -> throw requestNotFound()
+                            !request.hidden -> call.respond(donorView(request, profile.id))
+                            pledges.find(request.id, profile.id)?.takeIf { it.status != PledgeStatus.WITHDRAWN } != null ->
+                                call.respond(donorView(request.copy(note = null), profile.id))
                             else -> throw requestNotFound()
                         }
                     }
 
-                    post("/{id}/fulfill") {
-                        call.closeOwnedRequest(RequestStatus.FULFILLED)
-                    }
+                    rateLimit(RateLimits.WRITE) {
+                        post("/{id}/fulfill") {
+                            call.closeOwnedRequest(RequestStatus.FULFILLED)
+                        }
 
-                    post("/{id}/cancel") {
-                        call.closeOwnedRequest(RequestStatus.CANCELLED)
+                        post("/{id}/cancel") {
+                            call.closeOwnedRequest(RequestStatus.CANCELLED)
+                        }
                     }
 
                     rateLimit(RateLimits.REPORT) {
@@ -339,6 +363,9 @@ fun Route.apiV1(
                             val details = body.details?.trim()?.takeIf { it.isNotEmpty() }
                             if (details != null && details.length > MAX_REPORT_DETAILS) {
                                 throw badRequest("details_too_long", "details can be at most $MAX_REPORT_DETAILS characters")
+                            }
+                            if (details != null && TextRules.hasHiddenCharacters(details, allowNewlines = true)) {
+                                throw badRequest("invalid_details", "details must not contain control or invisible characters")
                             }
                             val result = safety.report(request.id, profile.id, body.reason, details, clock.instant(), safetyConfig.reportsToHide)
                             when (result) {
@@ -364,33 +391,45 @@ fun Route.apiV1(
                     }
 
                     // The requester confirms a helper after the blood bank tells them, open or closed.
-                    post("/{id}/helpers/{pledgeId}/confirm") {
-                        val request = call.ownedRequest(users, requests).effective(clock.instant())
-                        val pledgeId = call.parameters["pledgeId"]?.toLongOrNull() ?: throw helperNotFound()
-                        val outcome = call.receive<HelperConfirmBody>().outcome
-                        if (outcome !in RequesterOutcome.ALL) throw badRequest("invalid_outcome", "outcome must be donated or no_show")
-                        when (val result = pledges.confirmHelper(request.id, pledgeId, outcome, LocalDate.now(clock), clock.instant())) {
-                            is HelperConfirmResult.Confirmed -> if (outcome == RequesterOutcome.NO_SHOW) {
-                                // No-shows from several different requesters pause the donor's notifications.
-                                val now = clock.instant()
-                                safety.pauseIfNoShows(
-                                    donorId = result.pledge.donorId,
-                                    since = now.minus(safetyConfig.noShowWindow.toJavaDuration()),
-                                    minRequesters = safetyConfig.noShowRequestersToPause,
-                                    now = now,
-                                    pauseUntil = now.plus(safetyConfig.noShowPause.toJavaDuration()),
+                    rateLimit(RateLimits.WRITE) {
+                        post("/{id}/helpers/{pledgeId}/confirm") {
+                            val request = call.ownedRequest(users, requests).effective(clock.instant())
+                            val pledgeId = call.idParameter("pledgeId") ?: throw helperNotFound()
+                            val outcome = call.receive<HelperConfirmBody>().outcome
+                            if (outcome !in RequesterOutcome.ALL) throw badRequest("invalid_outcome", "outcome must be donated or no_show")
+                            // Not right after they committed: "donated" sets the donor's last donation date
+                            // (pausing their notifications for months), so it must not be usable as a prank.
+                            val helper = pledges.helpers(request.id).firstOrNull { it.pledgeId == pledgeId }
+                            if (helper != null && !canConfirmHelper(request, helper.committedAt, clock.instant())) {
+                                throw ApiException(
+                                    HttpStatusCode.Conflict, "too_early",
+                                    "You can confirm a donor ${MIN_TIME_BEFORE_CONFIRMING_HELPER.toMinutes()} minutes after they commit, " +
+                                        "or once the request closes",
                                 )
-                                onRequestEvent.onEvent(RequestEvent.HelperNoShow(request.id))
                             }
-                            HelperConfirmResult.NotFound -> throw helperNotFound()
-                            HelperConfirmResult.Withdrawn -> throw ApiException(
-                                HttpStatusCode.Conflict, "helper_withdrew", "This donor withdrew",
-                            )
-                            HelperConfirmResult.AlreadyConfirmed -> throw ApiException(
-                                HttpStatusCode.Conflict, "helper_already_confirmed", "You already confirmed this donor",
-                            )
+                            when (val result = pledges.confirmHelper(request.id, pledgeId, outcome, LocalDate.now(clock), clock.instant())) {
+                                is HelperConfirmResult.Confirmed -> if (outcome == RequesterOutcome.NO_SHOW) {
+                                    // No-shows from several different requesters pause the donor's notifications.
+                                    val now = clock.instant()
+                                    safety.pauseIfNoShows(
+                                        donorId = result.pledge.donorId,
+                                        since = now.minus(safetyConfig.noShowWindow.toJavaDuration()),
+                                        minRequesters = safetyConfig.noShowRequestersToPause,
+                                        now = now,
+                                        pauseUntil = now.plus(safetyConfig.noShowPause.toJavaDuration()),
+                                    )
+                                    onRequestEvent.onEvent(RequestEvent.HelperNoShow(request.id))
+                                }
+                                HelperConfirmResult.NotFound -> throw helperNotFound()
+                                HelperConfirmResult.Withdrawn -> throw ApiException(
+                                    HttpStatusCode.Conflict, "helper_withdrew", "This donor withdrew",
+                                )
+                                HelperConfirmResult.AlreadyConfirmed -> throw ApiException(
+                                    HttpStatusCode.Conflict, "helper_already_confirmed", "You already confirmed this donor",
+                                )
+                            }
+                            call.respond(ownerView(request))
                         }
-                        call.respond(ownerView(request))
                     }
 
                     rateLimit(RateLimits.HELP) {
@@ -442,21 +481,23 @@ fun Route.apiV1(
                     }
 
                     // "Did you donate?" Only updates the donor's own last donation date, never confirmed_donation.
-                    post("/{id}/donation") {
-                        val profile = call.requireProfile(users)
-                        val request = call.requestForDonor(profile, requests, clock)
-                        val donated = call.receive<DonationBody>().donated
-                        val pledge = pledges.find(request.id, profile.id)
-                        if (pledge == null || pledge.status != PledgeStatus.COMMITTED) throw noPledge()
-                        if (!canConfirmDonation(request, pledge, clock.instant(), arrivalWindow)) {
-                            throw ApiException(
-                                HttpStatusCode.Conflict, "too_early",
-                                "You can answer once the request closes or your arrival window ends",
-                            )
+                    rateLimit(RateLimits.WRITE) {
+                        post("/{id}/donation") {
+                            val profile = call.requireProfile(users)
+                            val request = call.requestForDonor(profile, requests, clock)
+                            val donated = call.receive<DonationBody>().donated
+                            val pledge = pledges.find(request.id, profile.id)
+                            if (pledge == null || pledge.status != PledgeStatus.COMMITTED) throw noPledge()
+                            if (!canConfirmDonation(request, pledge, clock.instant(), arrivalWindow)) {
+                                throw ApiException(
+                                    HttpStatusCode.Conflict, "too_early",
+                                    "You can answer once the request closes or your arrival window ends",
+                                )
+                            }
+                            pledges.confirmDonation(request.id, profile.id, donated, LocalDate.now(clock), clock.instant())
+                                ?: throw noPledge()
+                            call.respond(donorView(request, profile.id))
                         }
-                        pledges.confirmDonation(request.id, profile.id, donated, LocalDate.now(clock), clock.instant())
-                            ?: throw noPledge()
-                        call.respond(donorView(request, profile.id))
                     }
                 }
             }
@@ -466,6 +507,9 @@ fun Route.apiV1(
 
 private fun RoutingCall.user(): UserPrincipal = principal<UserPrincipal>()!!
 
+/** A positive id from the path; null (reported as not found) for anything else. */
+private fun RoutingCall.idParameter(name: String): Long? = parameters[name]?.toLongOrNull()?.takeIf { it > 0 }
+
 private suspend fun RoutingCall.requireProfile(users: UserRepository): UserProfile =
     users.findByUid(user().uid)
         ?: throw ApiException(HttpStatusCode.Conflict, "profile_required", "Create your profile first with PUT /me")
@@ -473,7 +517,7 @@ private suspend fun RoutingCall.requireProfile(users: UserRepository): UserProfi
 /** The request in the {id} path segment. Someone else's request is reported as missing, not forbidden. */
 private suspend fun RoutingCall.ownedRequest(users: UserRepository, requests: BloodRequestRepository): BloodRequest {
     val profile = requireProfile(users)
-    val request = parameters["id"]?.toLongOrNull()?.let { requests.findById(it) }
+    val request = idParameter("id")?.let { requests.findById(it) }
     if (request == null || request.requesterId != profile.id) throw requestNotFound()
     return request
 }
@@ -483,7 +527,7 @@ private suspend fun RoutingCall.ownedRequest(users: UserRepository, requests: Bl
  * Its status is the effective one.
  */
 private suspend fun RoutingCall.requestForDonor(profile: UserProfile, requests: BloodRequestRepository, clock: Clock): BloodRequest {
-    val request = parameters["id"]?.toLongOrNull()?.let { requests.findById(it) }?.effective(clock.instant())
+    val request = idParameter("id")?.let { requests.findById(it) }?.effective(clock.instant())
         ?: throw requestNotFound()
     if (request.requesterId == profile.id) {
         throw ApiException(HttpStatusCode.Conflict, "own_request", "You can't help with your own request")
@@ -491,6 +535,10 @@ private suspend fun RoutingCall.requestForDonor(profile: UserProfile, requests: 
     if (!requests.isNotified(request.id, profile.id)) throw requestNotFound()
     return request
 }
+
+/** True once the requester may confirm a helper: [MIN_TIME_BEFORE_CONFIRMING_HELPER] after they committed, or the request closed. */
+fun canConfirmHelper(request: BloodRequest, committedAt: Instant, now: Instant): Boolean =
+    request.effective(now).status != RequestStatus.OPEN || !now.isBefore(committedAt.plus(MIN_TIME_BEFORE_CONFIRMING_HELPER))
 
 /** True once a committed donor may answer "Did you donate?": the request closed or the arrival window ended. */
 fun canConfirmDonation(request: BloodRequest, pledge: Pledge, now: Instant, arrivalWindow: java.time.Duration): Boolean =
@@ -517,6 +565,9 @@ private fun helperNotFound() = ApiException(HttpStatusCode.NotFound, "helper_not
 
 private fun noPledge() = ApiException(HttpStatusCode.Conflict, "no_pledge", "You haven't committed to this request")
 
+/** FCM registration tokens are ~160 characters of [A-Za-z0-9_:-]. */
+private val FCM_TOKEN = Regex("[A-Za-z0-9_:-]{20,512}")
+
 private fun DeviceTokenBody.validToken(): String =
-    token.trim().takeIf { it.isNotEmpty() && it.length <= 4096 && it.none(Char::isWhitespace) }
-        ?: throw badRequest("invalid_token", "token must be a non-empty FCM registration token")
+    token.trim().takeIf { FCM_TOKEN.matches(it) }
+        ?: throw badRequest("invalid_token", "token must be an FCM registration token")

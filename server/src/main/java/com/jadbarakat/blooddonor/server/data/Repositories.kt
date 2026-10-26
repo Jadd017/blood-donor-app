@@ -69,8 +69,14 @@ interface BloodRequestRepository {
     suspend fun listNotifiedTo(userId: Long): List<BloodRequest>
 }
 
+/** A user keeps at most this many devices; registering another drops the least recently refreshed. */
+const val MAX_DEVICE_TOKENS_PER_USER = 5
+
 interface DeviceTokenRepository {
-    /** Registers [token] for [userId], taking it over if another user had it (shared phone). */
+    /**
+     * Registers [token] for [userId], taking it over if another user had it (shared phone), and
+     * keeps only the user's [MAX_DEVICE_TOKENS_PER_USER] most recent tokens.
+     */
     suspend fun upsert(userId: Long, token: String, now: Instant)
 
     /** Removes [token] if it belongs to [userId]. */

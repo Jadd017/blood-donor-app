@@ -3,6 +3,7 @@ package com.jadbarakat.blooddonor.server
 import com.jadbarakat.blooddonor.server.auth.AccountDeleter
 import com.jadbarakat.blooddonor.server.auth.TokenVerifier
 import com.jadbarakat.blooddonor.server.auth.VerifiedToken
+import com.jadbarakat.blooddonor.server.data.MAX_DEVICE_TOKENS_PER_USER
 import com.jadbarakat.blooddonor.server.data.Area
 import com.jadbarakat.blooddonor.server.data.AccountDeletion
 import com.jadbarakat.blooddonor.server.data.AreaRepository
@@ -199,8 +200,12 @@ class InMemoryBloodRequestRepository(private val hospitals: FakeHospitalReposito
 class InMemoryDeviceTokenRepository : DeviceTokenRepository {
     val tokens = mutableMapOf<String, Long>()
 
+    // Insertion order is recency: re-registering moves a token to the end.
     override suspend fun upsert(userId: Long, token: String, now: Instant) {
+        tokens.remove(token)
         tokens[token] = userId
+        val mine = tokens.filterValues { it == userId }.keys.toList()
+        mine.dropLast(MAX_DEVICE_TOKENS_PER_USER).forEach { tokens.remove(it) }
     }
 
     override suspend fun delete(userId: Long, token: String) {

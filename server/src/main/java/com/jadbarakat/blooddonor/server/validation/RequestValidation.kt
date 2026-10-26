@@ -28,6 +28,9 @@ fun CreateBloodRequestBody.validate(): NewBloodRequest {
         if (cleanNote.length > MAX_NOTE_LENGTH) {
             throw badRequest("invalid_note", "note must be at most $MAX_NOTE_LENGTH characters")
         }
+        if (TextRules.hasHiddenCharacters(cleanNote, allowNewlines = true)) {
+            throw badRequest("invalid_note", "note must not contain control or invisible characters")
+        }
         if (NoteRules.containsPhoneNumber(cleanNote)) {
             throw badRequest("note_contains_phone", "note must not contain phone numbers")
         }

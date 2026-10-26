@@ -24,6 +24,7 @@ import com.jadbarakat.blooddonor.server.data.ExposedHospitalRepository
 import com.jadbarakat.blooddonor.server.data.ExposedUserRepository
 import com.zaxxer.hikari.HikariConfig
 import com.zaxxer.hikari.HikariDataSource
+import io.ktor.server.engine.connector
 import io.ktor.server.engine.embeddedServer
 import io.ktor.server.netty.Netty
 import org.flywaydb.core.Flyway
@@ -52,7 +53,7 @@ fun main() {
 private fun start() {
     val dataSource = createDataSource()
     requirePostgis(dataSource)
-    Flyway.configure().dataSource(dataSource).load().migrate()
+    migrate(dataSource)
 
     val firebase = try {
         initFirebase(credentialsPath = env("FIREBASE_CREDENTIALS_PATH"), projectId = env("FIREBASE_PROJECT_ID"))
@@ -87,7 +88,19 @@ private fun start() {
     )
     val notifier = RequestNotifier(requests, pledges, deviceTokens, push, clock, config.arrivalWindow.toJavaDuration())
     val port = System.getenv("PORT")?.toIntOrNull() ?: 8080
-    embeddedServer(Netty, port = port) {
+    val connectionLimiter = ConnectionLimiter(max = intEnv("MAX_CONNECTIONS", 500))
+    val trustedProxies = System.getenv("TRUSTED_PROXY_IPS").orEmpty()
+        .split(',').map { it.trim() }.filter { it.isNotEmpty() }.toSet()
+    embeddedServer(Netty, configure = {
+        connector { this.port = port }
+        // Slow or oversized requests are cut off instead of tying up the server.
+        requestReadTimeoutSeconds = 15
+        responseWriteTimeoutSeconds = 15
+        maxInitialLineLength = 4096
+        maxHeaderSize = 8192
+        runningLimit = 32
+        channelPipelineConfig = { addConnectionLimits(connectionLimiter, idleSeconds = 60) }
+    }) {
         module(
             verifier = FirebaseTokenVerifier.create(firebase),
             users = ExposedUserRepository(db),
@@ -129,6 +142,7 @@ private fun start() {
             safetyConfig = safetyConfig,
             clock = clock,
             healthCheck = { dataSource.connection.use { it.isValid(2) } },
+            trustedProxies = trustedProxies,
         )
         startBackgroundJobs(requests, waves, notifier, clock, config.jobInterval)
     }.start(wait = true)
@@ -146,8 +160,29 @@ fun createDataSource(): HikariDataSource {
         username = env("DB_USER")
         password = env("DB_PASSWORD")
         maximumPoolSize = 5
+        // Keep row values (names, phones, emails) out of exception messages and therefore logs.
+        addDataSourceProperty("logServerErrorDetail", "false")
     }
     return HikariDataSource(config)
+}
+
+/**
+ * Runs the Flyway migrations. With DB_MIGRATION_USER set, they run as that role (the schema
+ * owner) and the server itself only needs a role that can read and write rows; see SECURITY.md.
+ */
+private fun migrate(dataSource: DataSource) {
+    val migrationUser = System.getenv("DB_MIGRATION_USER")?.takeIf { it.isNotBlank() }
+    val flyway = if (migrationUser == null) {
+        Flyway.configure().dataSource(dataSource)
+    } else {
+        Flyway.configure().dataSource(env("DB_URL"), migrationUser, env("DB_MIGRATION_PASSWORD"))
+    }
+    flyway.load().migrate()
+}
+
+private fun intEnv(name: String, default: Int): Int {
+    val raw = System.getenv(name)?.trim()?.takeIf { it.isNotEmpty() } ?: return default
+    return raw.toIntOrNull()?.takeIf { it > 0 } ?: throw StartupException("$name must be a positive whole number")
 }
 
 /** Migrations use geography columns but must never create extensions themselves. */

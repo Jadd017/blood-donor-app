@@ -1,5 +1,6 @@
 package com.jadbarakat.blooddonor.server
 
+import com.jadbarakat.blooddonor.server.api.MIN_TIME_BEFORE_CONFIRMING_HELPER
 import com.jadbarakat.blooddonor.server.api.RequestEvent
 import com.jadbarakat.blooddonor.server.auth.VerifiedToken
 import com.jadbarakat.blooddonor.server.data.Area
@@ -103,6 +104,11 @@ class PledgeRoutesTest {
             contentType(ContentType.Application.Json)
             setBody("""{"outcome":"$outcome"}""")
         }
+
+    /** The requester may only confirm a helper a while after they committed. */
+    private fun waitBeforeConfirming() {
+        clock.now = clock.now.plus(MIN_TIME_BEFORE_CONFIRMING_HELPER)
+    }
 
     private fun pledgeId(id: Long, donorId: Long) = runBlocking { pledges.find(id, donorId)!!.id }
 
@@ -312,6 +318,7 @@ class PledgeRoutesTest {
     fun `only the owner can confirm a helper`() = test {
         val id = createRequest()
         help(id)
+        waitBeforeConfirming()
         val pledge = pledgeId(id, bobId)
         // Someone else's request is reported as missing, as everywhere else.
         assertError(confirmHelper(id, pledge, "donated", who = "bob"), HttpStatusCode.NotFound, "request_not_found")
@@ -328,6 +335,7 @@ class PledgeRoutesTest {
         val other = createRequest()
         help(id)
         help(other)
+        waitBeforeConfirming()
         val pledge = pledgeId(id, bobId)
         assertError(confirmHelper(id, pledge, "maybe"), HttpStatusCode.BadRequest, "invalid_outcome")
         assertError(confirmHelper(id, pledgeId(other, bobId), "donated"), HttpStatusCode.NotFound, "helper_not_found")
@@ -346,6 +354,7 @@ class PledgeRoutesTest {
     fun `donated sets confirmed_donation and the donor's last donation date, and keeps counting`() = test {
         val id = createRequest(units = 1)
         help(id)
+        waitBeforeConfirming()
         val response = confirmHelper(id, pledgeId(id, bobId), "donated")
         assertEquals(HttpStatusCode.OK, response.status)
         val owner = json(response.bodyAsText())
@@ -372,6 +381,7 @@ class PledgeRoutesTest {
         help(id, "dave")
         assertEquals(2, view(id, "alice")["onTheWayCount"]!!.jsonPrimitive.int)
 
+        waitBeforeConfirming()
         val owner = json(confirmHelper(id, pledgeId(id, bobId), "no_show").bodyAsText())
         assertEquals(1, owner["committedCount"]!!.jsonPrimitive.int)
         assertEquals(1, owner["onTheWayCount"]!!.jsonPrimitive.int)

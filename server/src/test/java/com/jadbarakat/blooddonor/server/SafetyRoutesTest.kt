@@ -1,5 +1,6 @@
 package com.jadbarakat.blooddonor.server
 
+import com.jadbarakat.blooddonor.server.api.MIN_TIME_BEFORE_CONFIRMING_HELPER
 import com.jadbarakat.blooddonor.server.api.RequestEvent
 import com.jadbarakat.blooddonor.server.auth.VerifiedToken
 import com.jadbarakat.blooddonor.server.data.Area
@@ -279,7 +280,9 @@ class SafetyRoutesTest {
     private suspend fun ApplicationTestBuilder.noShow(requester: String, donor: String = "bob", bloodType: String = "O-") {
         val id = requests.create(ids.getValue(requester), NewBloodRequest(10, bloodType, "red_cells", 1, 24, null), clock.instant()).id
         notify(id, donor)
-        val pledge = (pledges.commit(id, ids.getValue(donor), clock.instant(), 2) as com.jadbarakat.blooddonor.server.data.CommitResult.Committed).pledge
+        // Committed long enough ago for the requester to be allowed to confirm.
+        val committedAt = clock.instant().minus(MIN_TIME_BEFORE_CONFIRMING_HELPER)
+        val pledge = (pledges.commit(id, ids.getValue(donor), committedAt, 2) as com.jadbarakat.blooddonor.server.data.CommitResult.Committed).pledge
         val response = client.post("/api/v1/requests/$id/helpers/${pledge.id}/confirm") {
             bearerAuth("$requester-token")
             contentType(ContentType.Application.Json)

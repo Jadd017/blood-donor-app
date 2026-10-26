@@ -95,23 +95,23 @@ class DonorRoutesTest {
 
     @Test
     fun `device token can be registered, refreshed and removed`() = test {
-        assertEquals(HttpStatusCode.NoContent, tokenCall("PUT", "bob-token", """{"token":"fcm-abc"}""").status)
-        assertEquals(bobId, deviceTokens.tokens["fcm-abc"])
-        assertEquals(HttpStatusCode.NoContent, tokenCall("PUT", "bob-token", """{"token":"fcm-abc"}""").status)
+        assertEquals(HttpStatusCode.NoContent, tokenCall("PUT", "bob-token", """{"token":"fcm-abc:APA91b_test-token-0001"}""").status)
+        assertEquals(bobId, deviceTokens.tokens["fcm-abc:APA91b_test-token-0001"])
+        assertEquals(HttpStatusCode.NoContent, tokenCall("PUT", "bob-token", """{"token":"fcm-abc:APA91b_test-token-0001"}""").status)
         assertEquals(1, deviceTokens.tokens.size)
 
-        assertEquals(HttpStatusCode.NoContent, tokenCall("DELETE", "bob-token", """{"token":"fcm-abc"}""").status)
+        assertEquals(HttpStatusCode.NoContent, tokenCall("DELETE", "bob-token", """{"token":"fcm-abc:APA91b_test-token-0001"}""").status)
         assertTrue(deviceTokens.tokens.isEmpty())
     }
 
     @Test
     fun `a token moves to whoever signs in on the phone, and others cannot delete it`() = test {
-        tokenCall("PUT", "bob-token", """{"token":"shared-phone"}""")
-        tokenCall("PUT", "alice-token", """{"token":"shared-phone"}""")
-        assertEquals(aliceId, deviceTokens.tokens["shared-phone"])
+        tokenCall("PUT", "bob-token", """{"token":"shared-phone:APA91b_test-token-02"}""")
+        tokenCall("PUT", "alice-token", """{"token":"shared-phone:APA91b_test-token-02"}""")
+        assertEquals(aliceId, deviceTokens.tokens["shared-phone:APA91b_test-token-02"])
 
-        tokenCall("DELETE", "bob-token", """{"token":"shared-phone"}""")
-        assertEquals(aliceId, deviceTokens.tokens["shared-phone"])
+        tokenCall("DELETE", "bob-token", """{"token":"shared-phone:APA91b_test-token-02"}""")
+        assertEquals(aliceId, deviceTokens.tokens["shared-phone:APA91b_test-token-02"])
     }
 
     @Test

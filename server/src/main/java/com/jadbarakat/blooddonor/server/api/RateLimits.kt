@@ -17,8 +17,13 @@ import kotlin.time.Duration.Companion.minutes
 object RateLimits {
     /** Unauthenticated API calls (GET /areas). */
     val PUBLIC = RateLimitName("public")
-    /** Every authenticated API call. */
+    /** Every call to an authenticated route, including ones whose token turns out to be missing or invalid. */
     val GENERAL = RateLimitName("general")
+    /** PUT and DELETE /me. */
+    val PROFILE = RateLimitName("profile")
+    val DEVICE_TOKEN = RateLimitName("device-token")
+    /** Fulfill, cancel, confirm a helper, "Did you donate?". */
+    val WRITE = RateLimitName("write")
     val POST_REQUEST = RateLimitName("post-request")
     val HELP = RateLimitName("help")
     val REPORT = RateLimitName("report")
@@ -48,7 +53,17 @@ class CallTokenVerifier(private val verifier: TokenVerifier) {
     }
 }
 
-fun Application.installRateLimits(config: SafetyConfig, tokens: CallTokenVerifier) {
+/**
+ * The caller's IP address. X-Forwarded-For is only believed when the direct peer is one of
+ * [trustedProxies] (our own reverse proxy); otherwise anyone could pick a fresh IP per call.
+ * The client is the right-most forwarded address that isn't one of our proxies.
+ */
+fun clientIp(peer: String, forwardedFor: String?, trustedProxies: Set<String>): String {
+    if (peer !in trustedProxies || forwardedFor.isNullOrBlank()) return peer
+    return forwardedFor.split(',').map { it.trim() }.lastOrNull { it.isNotEmpty() && it !in trustedProxies } ?: peer
+}
+
+fun Application.installRateLimits(config: SafetyConfig, tokens: CallTokenVerifier, trustedProxies: Set<String>) {
     // No global limit: it would count every call of every user behind one carrier IP together.
     install(RateLimit) {
         for ((name, perMinute) in listOf(
@@ -58,10 +73,16 @@ fun Application.installRateLimits(config: SafetyConfig, tokens: CallTokenVerifie
             RateLimits.HELP to config.rateLimitHelpPerMinute,
             RateLimits.REPORT to config.rateLimitReportPerMinute,
             RateLimits.BLOCKS to config.rateLimitBlocksPerMinute,
+            RateLimits.PROFILE to config.rateLimitProfilePerMinute,
+            RateLimits.DEVICE_TOKEN to config.rateLimitDeviceTokenPerMinute,
+            RateLimits.WRITE to config.rateLimitWritePerMinute,
         )) {
             register(name) {
                 rateLimiter(limit = perMinute, refillPeriod = 1.minutes)
-                requestKey { call -> tokens.uid(call)?.let { "user:$it" } ?: "ip:${call.request.origin.remoteHost}" }
+                requestKey { call ->
+                    tokens.uid(call)?.let { "user:$it" }
+                        ?: "ip:" + clientIp(call.request.origin.remoteAddress, call.request.headers[HttpHeaders.XForwardedFor], trustedProxies)
+                }
             }
         }
     }
