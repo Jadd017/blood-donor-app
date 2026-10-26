@@ -464,6 +464,11 @@ class RequestsViewModel(
             } catch (e: CancellationException) {
                 throw e
             } catch (e: ApiException.Http) {
+                // The server only lets the requester confirm a helper a while after they committed.
+                if (e.code == ErrorCodes.TOO_EARLY) {
+                    _uiState.update { it.copy(detailError = UiMessage(R.string.request_error_confirm_too_early)) }
+                    return@launch
+                }
                 val changed = when (e.code) {
                     ErrorCodes.REQUEST_NOT_OPEN -> UiMessage(R.string.request_error_not_open)
                     ErrorCodes.HELPER_NOT_FOUND, ErrorCodes.HELPER_WITHDREW, ErrorCodes.HELPER_ALREADY_CONFIRMED ->

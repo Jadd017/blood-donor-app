@@ -200,6 +200,7 @@
     <string name="donor_error_not_eligible">Your blood type can\'t be used for this request.</string>
     <string name="donor_error_too_recent">Your last donation was too recent to donate again.</string>
     <string name="donor_error_pledge_limit">You can commit to at most 2 requests at a time.</string>
+    <string name="request_error_confirm_too_early">You can confirm a donor 30 minutes after they commit, or once the request is closed.</string>
     <string name="donor_error_too_early">You can answer once the request closes or 3 hours after you committed.</string>
     <string name="donor_error_changed">This changed in the meantime. Here is the latest.</string>
     <string name="donor_request_closed">This request is closed. Thank you for being ready to help.</string>

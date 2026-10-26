@@ -5,6 +5,11 @@ plugins {
     alias(libs.plugins.kotlin.serialization)
 }
 
+// TODO: replace with the real server URL before releasing. Release builds talk HTTPS only
+// (cleartext is allowed for localhost in debug builds alone), so a plain-HTTP URL is refused here.
+val releaseApiBaseUrl = "https://api.example.com/"
+check(releaseApiBaseUrl.startsWith("https://")) { "The release API_BASE_URL must use https://" }
+
 android {
     namespace = "com.jadbarakat.blooddonor"
     compileSdk {
@@ -29,9 +34,11 @@ android {
             buildConfigField("String", "API_BASE_URL", "\"http://localhost:8080/\"")
         }
         release {
-            // TODO: replace with the real HTTPS server URL before releasing.
-            buildConfigField("String", "API_BASE_URL", "\"https://api.example.com/\"")
-            isMinifyEnabled = false
+            buildConfigField("String", "API_BASE_URL", "\"$releaseApiBaseUrl\"")
+            // Shrinks and obfuscates the code, drops unused resources, and strips Log calls
+            // (see proguard-rules.pro) so nothing personal ends up in logcat.
+            isMinifyEnabled = true
+            isShrinkResources = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"

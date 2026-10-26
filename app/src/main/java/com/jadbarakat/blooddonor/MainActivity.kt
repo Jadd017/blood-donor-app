@@ -70,9 +70,11 @@ class MainActivity : ComponentActivity() {
     /**
      * A tapped request notification carries "requestId" and "view" (from FCM data or our own tap
      * intent). "requester" opens my own request; anything else (or none, from older servers) the donor view.
+     * This activity is exported (it's the launcher), so any app can send these extras: only a positive
+     * id is used, and the server decides what this user may see of it.
      */
     private fun handleNotificationTap(intent: Intent?) {
-        val id = intent?.getStringExtra(BloodDonorMessagingService.EXTRA_REQUEST_ID)?.toLongOrNull() ?: return
+        val id = intent?.getStringExtra(BloodDonorMessagingService.EXTRA_REQUEST_ID)?.toLongOrNull()?.takeIf { it > 0 } ?: return
         val asOwner = intent.getStringExtra(BloodDonorMessagingService.EXTRA_VIEW) == BloodDonorMessagingService.VIEW_REQUESTER
         intent.removeExtra(BloodDonorMessagingService.EXTRA_REQUEST_ID) // don't reopen it on rotation
         (application as BloodDonorApp).container.pendingRequest.value = PendingRequest(id, asOwner)
