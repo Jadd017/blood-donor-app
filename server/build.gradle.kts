@@ -43,6 +43,7 @@ dependencies {
     implementation(libs.ktor.server.status.pages)
     implementation(libs.ktor.server.call.logging)
     implementation(libs.ktor.server.rate.limit)
+    implementation(libs.ktor.server.body.limit)
     // Logging
     implementation(libs.logback.classic)
     // PostgreSQL driver + connection pool
@@ -65,6 +66,12 @@ dependencies {
     implementation(libs.google.http.client.jackson2)
     // Phone number validation
     implementation(libs.libphonenumber)
+    // Security floors: one Netty version for every module (Ktor and Firebase/gRPC pull different
+    // ones), and a jackson-core without the known number/document length bypasses.
+    implementation(platform(libs.netty.bom))
+    constraints {
+        implementation(libs.jackson.core) { because("GHSA-72hv-8253-57qq and follow-ups, fixed in 2.18.8+") }
+    }
 
     testImplementation(libs.ktor.server.test.host)
     testImplementation(libs.kotlin.test.junit)
