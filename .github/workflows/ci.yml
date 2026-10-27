@@ -1,0 +1,59 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Read-only token: this workflow only builds and tests.
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Test and build
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # The Gradle daemon toolchain (gradle/gradle-daemon-jvm.properties) and :server need Java 21.
+      - name: Set up JDK 21
+        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      # Caches Gradle dependencies and validates the Gradle wrapper checksum.
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+
+      - name: Write placeholder google-services.json (fake values)
+        run: bash .github/scripts/write-placeholder-google-services.sh
+
+      - name: Server tests and build
+        run: ./gradlew :server:test :server:build
+
+      - name: Android lint (security checks are errors, see app/lint.xml)
+        run: ./gradlew :app:lintDebug
+
+      - name: Build debug app
+        run: ./gradlew :app:assembleDebug
+
+      - name: Upload test and lint reports
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: reports
+          path: |
+            server/build/reports/tests/
+            app/build/reports/lint-results-debug.*
+          retention-days: 7

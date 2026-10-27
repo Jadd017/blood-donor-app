@@ -1,0 +1,20 @@
+version: 2
+updates:
+  # Root Gradle build: covers :app and :server through gradle/libs.versions.toml.
+  - package-ecosystem: gradle
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      gradle-minor-and-patch:
+        update-types: [minor, patch]
+
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      actions-minor-and-patch:
+        update-types: [minor, patch]

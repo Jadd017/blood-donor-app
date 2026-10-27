@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Security-related lint checks fail the build (`./gradlew :app:lintDebug`, also run in CI).
+     Everything else keeps its default severity. -->
+<lint>
+    <!-- Debug and backup settings -->
+    <issue id="HardcodedDebugMode" severity="error" />
+    <issue id="AllowBackup" severity="error" />
+    <issue id="DataExtractionRules" severity="error" />
+
+    <!-- Components other apps can reach -->
+    <issue id="ExportedService" severity="error" />
+    <issue id="ExportedReceiver" severity="error" />
+    <issue id="ExportedContentProvider" severity="error" />
+    <issue id="ExportedPreferenceActivity" severity="error" />
+    <issue id="GrantAllUris" severity="error" />
+    <issue id="UnprotectedSMSBroadcastReceiver" severity="error" />
+    <issue id="UnsafeProtectedBroadcastReceiver" severity="error" />
+    <issue id="UseCheckPermission" severity="error" />
+
+    <!-- Intents and PendingIntents -->
+    <issue id="UnsafeImplicitIntentLaunch" severity="error" />
+    <issue id="UnsafeIntentLaunch" severity="error" />
+    <issue id="UnspecifiedImmutableFlag" severity="error" />
+
+    <!-- WebViews (none today; keep it that way unless reviewed) -->
+    <issue id="SetJavaScriptEnabled" severity="error" />
+    <issue id="AddJavascriptInterface" severity="error" />
+
+    <!-- TLS and network -->
+    <issue id="TrustAllX509TrustManager" severity="error" />
+    <issue id="BadHostnameVerifier" severity="error" />
+    <issue id="SSLCertificateSocketFactoryCreateSocket" severity="error" />
+    <issue id="SSLCertificateSocketFactoryGetInsecure" severity="error" />
+    <issue id="InsecureBaseConfiguration" severity="error" />
+    <issue id="AcceptsUserCertificates" severity="error" />
+
+    <!-- Storage, crypto and keys -->
+    <issue id="WorldReadableFiles" severity="error" />
+    <issue id="WorldWriteableFiles" severity="error" />
+    <issue id="PackagedPrivateKey" severity="error" />
+    <issue id="SecureRandom" severity="error" />
+    <issue id="GetInstance" severity="error" />
+</lint>

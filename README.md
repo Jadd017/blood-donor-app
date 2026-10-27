@@ -2,6 +2,8 @@
 
 **A blood donor matching app for Lebanon that notifies compatible, eligible donors near the hospital.**
 
+[![CI](https://github.com/Jadd017/blood-donor-app/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Jadd017/blood-donor-app/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/Jadd017/blood-donor-app/actions/workflows/codeql.yml/badge.svg?branch=main)](https://github.com/Jadd017/blood-donor-app/actions/workflows/codeql.yml)
 ![Status](https://img.shields.io/badge/status-in%20development-orange)
 ![Platform](https://img.shields.io/badge/platform-Android-3DDC84)
 ![Kotlin](https://img.shields.io/badge/Kotlin-Jetpack%20Compose-7F52FF)
