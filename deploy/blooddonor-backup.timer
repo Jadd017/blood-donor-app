@@ -1,0 +1,13 @@
+# Nightly at 03:30 VM time (UTC on Google Cloud images: 05:30 or 06:30 in Lebanon).
+# Enable once the database exists: sudo systemctl enable --now blooddonor-backup.timer
+[Unit]
+Description=Nightly BloodDonor database backup
+
+[Timer]
+OnCalendar=*-*-* 03:30:00
+RandomizedDelaySec=10m
+# A night missed while the VM was off is made up at the next boot.
+Persistent=true
+
+[Install]
+WantedBy=timers.target

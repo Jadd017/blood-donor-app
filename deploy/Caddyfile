@@ -1,0 +1,24 @@
+# Caddy in front of the BloodDonor server: automatic HTTPS (Let's Encrypt) for the DuckDNS name,
+# HTTP is redirected to HTTPS. Install as /etc/caddy/Caddyfile after replacing <DOMAIN>, e.g.
+#   sed 's/<DOMAIN>/blooddonor-example.duckdns.org/' deploy/Caddyfile | sudo tee /etc/caddy/Caddyfile
+#   sudo caddy validate --config /etc/caddy/Caddyfile && sudo systemctl reload caddy
+
+<DOMAIN> {
+	# The API never takes more than 16 KB (the server answers 413 itself); this stops
+	# anything far bigger before it reaches the JVM.
+	request_body {
+		max_size 32KB
+	}
+
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "no-referrer"
+		X-Frame-Options "DENY"
+		-Server
+	}
+
+	# The server listens on 127.0.0.1 only. Caddy replaces any client-sent X-Forwarded-For with
+	# the real client address, and the server trusts it from 127.0.0.1 (TRUSTED_PROXY_IPS).
+	reverse_proxy 127.0.0.1:8080
+}

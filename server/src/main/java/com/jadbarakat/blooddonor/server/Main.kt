@@ -87,12 +87,17 @@ private fun start() {
         clock = clock,
     )
     val notifier = RequestNotifier(requests, pledges, deviceTokens, push, clock, config.arrivalWindow.toJavaDuration())
+    // Localhost unless told otherwise: in production only the reverse proxy (Caddy) may reach it.
+    val host = System.getenv("HOST")?.trim()?.takeIf { it.isNotEmpty() } ?: "127.0.0.1"
     val port = System.getenv("PORT")?.toIntOrNull() ?: 8080
     val connectionLimiter = ConnectionLimiter(max = intEnv("MAX_CONNECTIONS", 500))
     val trustedProxies = System.getenv("TRUSTED_PROXY_IPS").orEmpty()
         .split(',').map { it.trim() }.filter { it.isNotEmpty() }.toSet()
     embeddedServer(Netty, configure = {
-        connector { this.port = port }
+        connector {
+            this.host = host
+            this.port = port
+        }
         // Slow or oversized requests are cut off instead of tying up the server.
         requestReadTimeoutSeconds = 15
         responseWriteTimeoutSeconds = 15

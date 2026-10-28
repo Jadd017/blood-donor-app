@@ -1,0 +1,52 @@
+# BloodDonor API server. Installed by setup-vm.sh as /etc/systemd/system/blooddonor.service.
+# Logs: journalctl -u blooddonor -f
+[Unit]
+Description=BloodDonor API server (Ktor)
+Wants=network-online.target
+After=network-online.target postgresql.service
+Requires=postgresql.service
+
+[Service]
+Type=simple
+User=blooddonor
+Group=blooddonor
+EnvironmentFile=/etc/blooddonor/server.env
+# 1 GB VM: about 320 MB heap plus metaspace, code cache, thread stacks and Netty's direct buffers
+# keeps the whole process near 500 MB. Exit on OOM so systemd restarts a clean process.
+Environment="JAVA_OPTS=-Xms64m -Xmx320m -XX:+UseSerialGC -XX:MaxMetaspaceSize=128m -XX:ReservedCodeCacheSize=64m -XX:MaxDirectMemorySize=96m -Xss512k -XX:+ExitOnOutOfMemoryError"
+# update.sh points this symlink at the release to run.
+ExecStart=/opt/blooddonor/current/bin/server
+Restart=always
+RestartSec=5
+# Ktor stops on SIGTERM; give in-flight requests a moment.
+TimeoutStopSec=20
+SuccessExitStatus=143
+
+# Hardening. The server writes nothing to disk (logs go to the journal, the JVM's /tmp is
+# private), so ProtectSystem=strict needs no ReadWritePaths.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+RestrictNamespaces=true
+LockPersonality=true
+RemoveIPC=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+# AF_NETLINK: the JVM and Netty may list network interfaces at start-up.
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
+SystemCallArchitectures=native
+UMask=0077
+# Not MemoryDenyWriteExecute: the JVM's JIT compiler needs writable+executable memory.
+
+[Install]
+WantedBy=multi-user.target

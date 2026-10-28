@@ -119,6 +119,8 @@ reverse proxy), so clients can't pick a fresh IP per call.
 - Request bodies over 16 KB are refused with `413`, also when sent without `Content-Length`.
 - Netty: 15 s request read and response write timeouts, connections idle for 60 s are closed,
   4 KB request line and 8 KB headers at most, and at most `MAX_CONNECTIONS` (500) open connections.
+- The server listens on `127.0.0.1` unless `HOST` says otherwise, so in production only the
+  reverse proxy on the same machine can reach it (see `deploy/`).
 - `GET /health` answers only `OK` or `503 Unavailable`.
 - TLS is expected to be terminated in front of the server; the release app only speaks HTTPS
   (cleartext is allowed for `localhost` in debug builds only, and the release build refuses a
