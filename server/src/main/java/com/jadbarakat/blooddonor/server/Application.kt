@@ -25,6 +25,7 @@ import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.serialization.kotlinx.json.json
 import io.ktor.server.application.Application
+import io.ktor.server.application.ApplicationCall
 import io.ktor.server.application.createApplicationPlugin
 import io.ktor.server.application.install
 import io.ktor.server.auth.Authentication
@@ -47,6 +48,11 @@ import java.time.ZoneId
 
 /** Every request body is small JSON; anything bigger is rejected with 413 before it is read. */
 const val MAX_BODY_BYTES = 16L * 1024
+
+private suspend fun ApplicationCall.respondPayloadTooLarge() = respond(
+    HttpStatusCode.PayloadTooLarge,
+    ApiError("payload_too_large", "Request body is larger than $MAX_BODY_BYTES bytes"),
+)
 
 /** A JSON API for the app only: no browser may frame, sniff, cache or embed its responses. */
 private val SecurityHeaders = createApplicationPlugin("SecurityHeaders") {
@@ -94,15 +100,15 @@ fun Application.module(
         exception<ApiException> { call, e ->
             call.respond(e.status, ApiError(e.code, e.message, e.details))
         }
-        exception<BadRequestException> { call, _ ->
-            call.respond(HttpStatusCode.BadRequest, ApiError("invalid_body", "Request body is missing or malformed"))
+        exception<BadRequestException> { call, e ->
+            // A chunked body can hit the size limit mid-deserialization, where receive() wraps it.
+            if (generateSequence<Throwable>(e) { it.cause }.any { it is PayloadTooLargeException }) {
+                call.respondPayloadTooLarge()
+            } else {
+                call.respond(HttpStatusCode.BadRequest, ApiError("invalid_body", "Request body is missing or malformed"))
+            }
         }
-        exception<PayloadTooLargeException> { call, _ ->
-            call.respond(
-                HttpStatusCode.PayloadTooLarge,
-                ApiError("payload_too_large", "Request body is larger than $MAX_BODY_BYTES bytes"),
-            )
-        }
+        exception<PayloadTooLargeException> { call, _ -> call.respondPayloadTooLarge() }
         exception<AuthUnavailableException> { call, e ->
             call.application.environment.log.warn("Firebase token check unavailable: {}", e.cause?.javaClass?.name)
             call.respond(HttpStatusCode.ServiceUnavailable, ApiError("auth_unavailable", "Sign-in can't be checked right now, try again"))
